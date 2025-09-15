@@ -1,0 +1,53 @@
+{
+    "$schema" : "https://aka.ms/winget-packages.schema.2.0.json",                                              
+    "CreationDate" : "2025-07-02T23:53:00.650-00:00",                                                          
+    "Sources" :                                                                                                
+    [                                                                                                          
+        {                                                                                                  
+            "Packages" :
+            [
+                    {
+                        "PackageIdentifier" : "Libretro.RetroArch"
+                    },
+                    {
+                        "PackageIdentifier" : "Valve.Steam"
+                    },
+                    {
+                        "PackageIdentifier" : "Ubisoft.Connect"
+                    },
+                    {
+                        "PackageIdentifier" : "EpicGames.EpicGamesLauncher"
+                    },
+                    {
+                        "PackageIdentifier" : "GOG.Galaxy"
+                    },
+                    {
+                        "PackageIdentifier" : "ElectronicArts.EADesktop"
+                    },
+                    {
+                        "PackageIdentifier" : "Playnite.Playnite"
+                    },
+                    {
+                        "PackageIdentifier" : "ItchIo.Itch"
+                    },
+                    {
+                        "PackageIdentifier" : "Amazon.Games"
+                    },
+                    {
+                        "PackageIdentifier" : "Discord.Discord"
+                    },
+                    {
+                        "PackageIdentifier" : "Blizzard.BattleNet"
+                    }
+            ],
+            "SourceDetails" :
+            {
+                "Argument" : "https://cdn.winget.microsoft.com/cache",
+                "Identifier" : "Microsoft.Winget.Source_8wekyb3d8bbwe",
+                "Name" : "winget",
+                "Type" : "Microsoft.PreIndexed.Package"
+            }
+        }
+    ],
+    "WinGetVersion" : "1.11.400"
+}
