@@ -1,0 +1,19 @@
+[user]
+    email = fabiantuertscher@gmail.com
+    name = fabibyte
+
+[credential]
+    helper = /mnt/c/Users/Fabi/AppData/Local/Programs/Git\\ Credential\\ Manager/git-credential-manager.exe
+
+[core]
+    pager = delta
+
+[interactive]
+    diffFilter = delta --color-only
+
+[delta]
+    navigate = true
+    dark = true
+
+[merge]
+    conflictStyle = zdiff3

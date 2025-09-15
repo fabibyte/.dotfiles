@@ -1,0 +1,21 @@
+{
+	"request": [],
+	"sendHeader": [
+		{
+			"enable": true,
+			"name": "Deutsch",
+			"ruleType": "modifySendHeader",
+			"matchType": "regexp",
+			"pattern": "https?://(zsw.finkzeit.at|a5.fhv.at).*",
+			"exclude": "",
+			"group": "Ungrouped",
+			"isFunction": false,
+			"action": {
+				"name": "accept-language",
+				"value": "de-AT"
+			}
+		}
+	],
+	"receiveHeader": [],
+	"receiveBody": []
+}
