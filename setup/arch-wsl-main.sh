@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared.sh"
 
+TEMP_SUDOERS="/etc/sudoers.d/passwordless-bootstrap"
+
 assert_running_arch() {
     if ! grep -qi "arch" /etc/os-release 2>/dev/null; then
         error "This script is intended for Arch Linux."
@@ -47,17 +49,19 @@ setup_sudo() {
 
     if ! command -v sudo >/dev/null 2>&1; then
         info "Installing sudo..."
-        pacman -Sy --noconfirm --needed sudo
+        pacman -Sy --noconfirm --needed sudo &> /dev/null
     fi
 
     if ! getent group sudo >/dev/null 2>&1; then
         info "Adding sudo group..."
-        groupadd sudo
+        groupadd --gid 27 sudo
     fi
 
     if grep -q "^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
+        info "Configuring sudoers..."
         sed -i 's/^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL/%sudo ALL=(ALL:ALL) ALL/' /etc/sudoers
     elif ! grep -q "^%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
+        info "Configuring sudoers..."
         echo "%sudo ALL=(ALL:ALL) ALL" >> /etc/sudoers
     fi
 
@@ -76,17 +80,40 @@ setup_user() {
 
     if ! id -u fabi >/dev/null 2>&1; then
         info "Creating user fabi..."
-        useradd -m -G sudo -u 1000 fabi
+        groupadd --gid 1000 fabi
+        useradd --create-home --groups sudo --uid 1000 --gid 1000 fabi
 
         info "Please set a password for the new user 'fabi'."
         passwd fabi || { error "Failed to set password. Setup cannot continue securely."; exit 1; }
     fi
 
-    #set_wsl_default_user "fabi"
+    echo "fabi ALL=(ALL:ALL) NOPASSWD: ALL" > "$TEMP_SUDOERS"
+    chmod 0440 "$TEMP_SUDOERS"
 
-    if [[ "$(id -un)" != "fabi" ]]; then
-        info "Switching to user fabi for the rest of the script..."
-        exec su - fabi -c "DOTFILES_FOLDER='$DOTFILES_FOLDER' DOTFILES_LOG_FILE='$DOTFILES_LOG_FILE' DOTFILES_TEMP_LOG_FILE='$DOTFILES_TEMP_LOG_FILE' \"$script_dir/$(basename "${BASH_SOURCE[0]}")\""
+    info "Switching to user fabi for the rest of the script..."
+    exec sudo -u fabi DOTFILES_FOLDER="$DOTFILES_FOLDER" DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" DOTFILES_TEMP_LOG_FILE="$DOTFILES_TEMP_LOG_FILE" "$script_dir/$(basename "${BASH_SOURCE[0]}")"
+}
+
+remount_c() {
+    if [ "$#" -eq 0 ]; then
+        echo "Usage: remount_c <uid> [gid]"
+        return 1
+    fi
+
+    local TARGET_UID=$1
+    local TARGET_GID=${2:-$1}
+    local CURRENT_UID
+    CURRENT_UID=$(stat -c '%u' /mnt/c)
+    local CURRENT_GID
+    CURRENT_GID=$(stat -c '%g' /mnt/c)
+
+    if [ "$CURRENT_UID" -ne "$TARGET_UID" ] || [ "$CURRENT_GID" -ne "$TARGET_GID" ]; then
+        # Step out of the directory to allow unmounting
+        cd / || return 1
+        #sudo umount /mnt/c
+        sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$TARGET_UID,gid=$TARGET_GID,cache=5,access=client,msize=65536"
+    else
+        echo "Already mounted with correct UID/GID."
     fi
 }
 
@@ -109,38 +136,8 @@ EOF
     fi
 
     info "Writing $conf_file..."
-    echo "$desired" | safe_sudo tee "$conf_file" > /dev/null
+    echo "$desired" | sudo tee "$conf_file" > /dev/null
     success "$conf_file has been updated."
-}
-
-set_wsl_default_user() {
-    local CURRENT_USER
-    CURRENT_USER=$(whoami)
-    local TARGET_USER="${1:-$CURRENT_USER}"
-    local WSL_CONF="/etc/wsl.conf"
-
-    info "Setting $TARGET_USER as WSL default user."
-
-    if [ ! -f "$WSL_CONF" ]; then
-        info "Creating $WSL_CONF..."
-        echo -e "[user]\ndefault=$TARGET_USER" | safe_sudo tee "$WSL_CONF" > /dev/null
-        return 0
-    fi
-
-    if grep -q "default=$TARGET_USER" "$WSL_CONF"; then
-        success "Success: Default user is already set to $TARGET_USER."
-        return 0
-    fi
-
-    if grep -q "\[user\]" "$WSL_CONF"; then
-        info "Updating [user] section in $WSL_CONF..."
-        safe_sudo sed -i "/\[user\]/a default=$TARGET_USER" "$WSL_CONF"
-    else
-        info "Adding [user] section to $WSL_CONF..."
-        echo -e "\n[user]\ndefault=$TARGET_USER" | safe_sudo tee -a "$WSL_CONF" > /dev/null
-    fi
-
-    success "Done. WSL default user has been set to $TARGET_USER."
 }
 
 install_packages() {
@@ -150,16 +147,16 @@ install_packages() {
     fi
 
     info "Updating package cache..."
-    safe_sudo pacman -Syu --noconfirm
+    sudo pacman -Syu --noconfirm &> /dev/null
 
     info "Installing base packages..."
-    safe_sudo pacman -S --noconfirm --needed \
-        git base-devel curl neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij mise wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
+    sudo pacman -S --noconfirm --needed \
+        git base-devel curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij mise wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
     info "Enabling sshd service..."
-    safe_sudo systemctl enable --now sshd || warning "Failed to enable / start sshd."
+    sudo systemctl enable --now sshd || warning "Failed to enable / start sshd."
 
-    install_shared_tooling
+    # install_shared_tooling
 
     info "Package installation complete."
 }
@@ -168,22 +165,20 @@ main() {
     init_logging
     assert_running_in_wsl
     assert_running_arch
+
+    # Only run as root
     unlock_root
     setup_pacman_keys
     setup_sudo
-    echo "sudo before"
-    sudo -v
     setup_user "$SCRIPT_DIR"
-    echo "sudo after"
-    sudo -v
+
+    trap "sudo rm -f $TEMP_SUDOERS > /dev/null 2>&1" EXIT
+    remount_c 1000
     change_wsl_distribution_conf
     install_packages
     setup_dotfiles "$DOTFILES_FOLDER"
     set_fish_default_shell
     finalize_logging
-
-    info "System setup complete. Rebooting to apply changes..."
-    safe_sudo reboot
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" || "$0" == *"bash"* ]]; then

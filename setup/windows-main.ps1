@@ -175,6 +175,7 @@ function Invoke-WSLDotfilesSetup {
         $bashCmd = "DOTFILES_FOLDER='$WslDotfilesFolder' DOTFILES_LOG_FILE='$WslLogFileFinal' DOTFILES_TEMP_LOG_FILE='$WslLogFileTemp' bash '$wslScriptDir/arch-wsl-main.sh'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
+        # wsl --shutdown
         Write-Success 'Dotfiles setup completed inside WSL.'
     }
 }
@@ -234,14 +235,17 @@ function Remove-RebootTask {
     Write-Info "Removed scheduled task: $TaskName"
 }
 
-function New-SymbolicLink {
+function New-Symlink {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$Src,
-        [string]$Tgt,
-        [switch]$Force,
-        [switch]$BackupExisting
+        [string]$Tgt
     )
+
+    if (-not $Src -or -not $Tgt) {
+        Write-ErrorLog "New-Symlink requires -Src and -Tgt arguments"
+        return
+    }
 
     if (-not $PSCmdlet.ShouldProcess($Tgt, "Create or update symbolic link to $Src")) {
         return
@@ -252,11 +256,7 @@ function New-SymbolicLink {
         return
     }
 
-    $tgtDir = Split-Path -Parent $Tgt
-    New-Item -ItemType Directory -Path $tgtDir -Force | Out-Null
-
-    $existing = Test-Path -LiteralPath $Tgt -PathType Leaf -or Test-Path -LiteralPath $Tgt -PathType Container
-    if ($existing) {
+    if (Test-Path -LiteralPath $Tgt) {
         $item = Get-Item -LiteralPath $Tgt -Force
         $isLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
 
@@ -267,35 +267,40 @@ function New-SymbolicLink {
                 return
             }
 
-            if ($Force) {
-                Remove-Item -LiteralPath $Tgt -Recurse -Force
-            }
-            else {
-                Write-WarningLog "Symlink exists and points elsewhere: $Tgt (-> $currentTarget). Use -Force to replace."
-                return
-            }
+            Remove-Item -LiteralPath $Tgt -Force
         }
         else {
-            if ($BackupExisting) {
-                $backupPath = "$Tgt.bak"
-                if (Test-Path -LiteralPath $backupPath) {
-                    $backupPath = "$Tgt.bak.$([DateTime]::UtcNow.ToString('yyyyMMdd_HHmmss'))"
-                }
-                Move-Item -LiteralPath $Tgt -Destination $backupPath -Force
-                Write-Info "Backed up existing item to: $backupPath"
-            }
-            elseif ($Force) {
-                Remove-Item -LiteralPath $Tgt -Recurse -Force
-            }
-            else {
-                Write-WarningLog "Target exists and is not a symlink; skipping: $Tgt"
-                return
-            }
+            Write-WarningLog "Target exists and is not a symlink; skipping: $Tgt"
+            return
         }
+    }
+
+    $tgtDir = Split-Path -Parent $Tgt
+    if (-not (Test-Path $tgtDir)) {
+        New-Item -ItemType Directory -Path $tgtDir -Force | Out-Null
     }
 
     New-Item -ItemType SymbolicLink -Path $Tgt -Target $Src -Force | Out-Null
     Write-Success "Linked $Tgt -> $Src"
+}
+
+function New-SymlinkTree {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [string]$Src,
+        [string]$Tgt
+    )
+
+    if (-not (Test-Path -Path $Src -PathType Container)) {
+        Write-WarningLog "Source directory does not exist: $Src"
+        return
+    }
+
+    Get-ChildItem -Path $Src -File -Recurse | ForEach-Object {
+        $relPath = $_.FullName.Substring($Src.TrimEnd('\').Length + 1)
+        $tgtFile = Join-Path $Tgt $relPath
+        New-Symlink -Src $_.FullName -Tgt $tgtFile
+    }
 }
 
 function Register-SetupScheduledTask {
@@ -343,7 +348,7 @@ function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
 
-    #$primary = '7zip.7zip', 'Docker.DockerDesktop', 'voidtools.Everything.Alpha', 'Mozilla.Firefox', 'RARLab.WinRAR', 'Zen-Team.Zen-Browser', 'NordSecurity.NordVPN', 'Google.GoogleDrive', 'PDFgear.PDFgear', 'WinDirStat.WinDirStat', 'Google.Chrome', 'Klocman.BulkCrapUninstaller', 'wez.wezterm', 'EaseUS.TodoBackup', 'Parsec.Parsec', 'FlorianHeidenreich.Mp3tag', 'BleachBit.BleachBit', 'Discord.Discord', 'FastCopy.FastCopy', 'Obsidian.Obsidian', 'ZedIndustries.Zed', 'Codeium.Windsurf', 'Microsoft.VisualStudioCode', 'Google.Antigravity', 'Anysphere.Cursor', 'Microsoft.PowerToys', '9NKSQGP7F2NH'
+    #$primary = '7zip.7zip', 'voidtools.Everything.Alpha', 'Mozilla.Firefox', 'RARLab.WinRAR', 'Zen-Team.Zen-Browser', 'NordSecurity.NordVPN', 'Google.GoogleDrive', 'PDFgear.PDFgear', 'WinDirStat.WinDirStat', 'Google.Chrome', 'Klocman.BulkCrapUninstaller', 'wez.wezterm', 'EaseUS.TodoBackup', 'Parsec.Parsec', 'FlorianHeidenreich.Mp3tag', 'BleachBit.BleachBit', 'Discord.Discord', 'FastCopy.FastCopy', 'Obsidian.Obsidian', 'ZedIndustries.Zed', 'Codeium.Windsurf', 'Microsoft.VisualStudioCode', 'Google.Antigravity', 'Anysphere.Cursor', 'Microsoft.PowerToys', '9NKSQGP7F2NH'
     #$additional = 'Logitech.GHUB', 'Corsair.iCUE.5', 'RockstarGames.Launcher', 'Valve.Steam', 'Ubisoft.Connect', 'EpicGames.EpicGamesLauncher', 'GOG.Galaxy', 'ElectronicArts.EADesktop', 'Playnite.Playnite', 'ItchIo.Itch', 'Amazon.Games', 'XPDM5VSMTKQLBJ', '9NVMNJCR03XV', 'Syncthing.Syncthing'
 
     $primary = '7zip.7zip'
@@ -524,20 +529,20 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.3.0"
+    Write-Info "Version: 1.3.9"
     Install-WSLPlatform -RebootTaskName $rebootTaskName -ScriptPath $PSCommandPath
-    Install-WSLDistroIfMissing -DistroName $wslDistroName
+    Install-WSLDistroIfMissing -DistroName $wslDistroName | Out-Null
     
-    Install-WingetApps
+    # Install-WingetApps
     # Install-NonWingetApps -NonWingetApps $nonWingetApps
 
     Invoke-WSLDotfilesSetup -DistroName $wslDistroName -WslDotfilesFolder $WslDotfilesFolder -WslLogFileFinal $WslLogFileFinal -WslLogFileTemp $WslLogFileTemp -ScriptRoot $PSScriptRoot
     Invoke-WSLSyncthingDecryption -DistroName $wslDistroName -DotfilesWslPath "/mnt/c/Users/$env:USERNAME/.dotfiles"
 
     Write-Info 'Creating symbolic links...'
-    New-SymbolicLink -Src "$env:USERPROFILE\.dotfiles\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
-    New-SymbolicLink -Src "$env:USERPROFILE\.dotfiles\.ssh\config" -Tgt "$env:USERPROFILE\.ssh\config"
-    New-SymbolicLink -Src "$env:USERPROFILE\.dotfiles\.ssh\syncthing" -Tgt "$env:LOCALAPPDATA\Syncthing"
+    New-Symlink -Src "$env:USERPROFILE\.dotfiles\wezterm\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
+    New-SymlinkTree -Src "$env:USERPROFILE\.dotfiles\.ssh" -Tgt "$env:USERPROFILE\.ssh"
+    New-SymlinkTree -Src "$env:USERPROFILE\.dotfiles\syncthing" -Tgt "$env:LOCALAPPDATA\Syncthing"
 
     Register-SetupScheduledTask -ScheduledTaskCommands $scheduledTaskCommands
 

@@ -3,11 +3,6 @@ if status is-interactive
     set -g fish_greeting
     set -gx EDITOR nvim
 
-    if env | grep -q WSL
-        set -gx IS_WSL=true
-        set -gx WINUSER=$(cmd.exe /c 'echo %USERNAME%' | tr -d '\r')
-    end
-
     alias gs='git status'
     alias gl='git log'
     alias gd='git diff'
@@ -29,5 +24,5 @@ if status is-interactive
         rm -f -- "$tmp"
     end
 
-    fish_config theme choose "Catppuccin Macchiato"
+    fish_config theme choose catppuccin-macchiato
 end

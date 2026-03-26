@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-SUDO_PASS=""
 DOTFILES_FOLDER="${DOTFILES_FOLDER:-$HOME/.dotfiles}"
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-$DOTFILES_FOLDER/setup_$(date +%Y%m%d_%H%M%S).log}"
 DOTFILES_TEMP_LOG_FILE="${DOTFILES_TEMP_LOG_FILE:-/mnt/c/Windows/Temp/setup_$(date +%Y%m%d_%H%M%S).log}"
@@ -85,20 +84,6 @@ assert_running_in_wsl() {
     if ! grep -qi "microsoft" /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME-}" ]; then
         error "This script is intended to run inside WSL."
         exit 1
-    fi
-}
-
-safe_sudo() {
-    if [ -z "$SUDO_PASS" ]; then
-        echo -n "[safe_sudo] Enter password for $(whoami): "
-        read -rs SUDO_PASS
-        echo ""
-    fi
-
-    if [ ! -t 0 ]; then
-        { printf "%s\n" "$SUDO_PASS"; cat; } | sudo -S -p "" -- "$@"
-    else
-        printf "%s\n" "$SUDO_PASS" | sudo -S -p "" -- "$@"
     fi
 }
 
@@ -209,7 +194,7 @@ decrypt_ssh_keys() {
     chmod 600 "$decrypted"
     success "SSH key decrypted."
 
-    create_symlink "$dotfiles_folder/.ssh" "$HOME/.ssh"
+    link_tree "$dotfiles_folder/.ssh" "$HOME/.ssh"
 }
 
 set_fish_default_shell() {
@@ -228,7 +213,7 @@ set_fish_default_shell() {
 
     if ! grep -qx "$fish_shell" /etc/shells; then
         info "Registering fish shell in /etc/shells..."
-        echo "$fish_shell" | safe_sudo tee -a /etc/shells >/dev/null
+        echo "$fish_shell" | sudo tee -a /etc/shells >/dev/null
     fi
 
     if [ "$(basename "$SHELL")" = "fish" ]; then
@@ -237,7 +222,7 @@ set_fish_default_shell() {
     fi
 
     info "Setting fish as default shell..."
-    safe_sudo chsh -s "$fish_shell" "$(whoami)" || warning "Failed to change shell. You may need to run this manually."
+    sudo chsh -s "$fish_shell" "$(whoami)" || warning "Failed to change shell. You may need to run this manually."
     success "Default shell set to fish."
 }
 
@@ -308,7 +293,6 @@ setup_dotfiles() {
     create_symlink "$dotfiles_folder/.gitconfig" "$HOME/.gitconfig"
 
     info "Fetching themes..."
-    fetch_file "https://raw.githubusercontent.com/catppuccin/fish/refs/heads/main/themes/Catppuccin%20Macchiato.theme" "$HOME/.config/fish/themes/Catppuccin Macchiato.theme"
     fetch_file "https://raw.githubusercontent.com/catppuccin/yazi/refs/heads/main/themes/macchiato/catppuccin-macchiato-blue.toml" "$HOME/.config/yazi/theme.toml"
 
     success "Shared dotfiles setup completed."
