@@ -18,7 +18,7 @@ unlock_root() {
     local root_hash
     root_hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
     if [[ "$root_hash" =~ ^[\*!]*$ ]]; then
-        echo "Root password is not set. Please set it now."
+        info "Root password is not set. Please set it now."
         passwd root
     else
         success "Root password is already set."
@@ -46,10 +46,12 @@ setup_sudo() {
     [[ "$(whoami)" != "root" ]] && return 0
 
     if ! command -v sudo >/dev/null 2>&1; then
+        info "Installing sudo..."
         pacman -Sy --noconfirm --needed sudo
     fi
 
     if ! getent group sudo >/dev/null 2>&1; then
+        info "Adding sudo group..."
         groupadd sudo
     fi
 
@@ -169,7 +171,11 @@ main() {
     unlock_root
     setup_pacman_keys
     setup_sudo
+    echo "sudo before"
+    sudo -v
     setup_user "$SCRIPT_DIR"
+    echo "sudo after"
+    sudo -v
     change_wsl_distribution_conf
     install_packages
     setup_dotfiles "$DOTFILES_FOLDER"

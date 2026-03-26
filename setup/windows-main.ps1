@@ -524,7 +524,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.2.6"
+    Write-Info "Version: 1.3.0"
     Install-WSLPlatform -RebootTaskName $rebootTaskName -ScriptPath $PSCommandPath
     Install-WSLDistroIfMissing -DistroName $wslDistroName
     

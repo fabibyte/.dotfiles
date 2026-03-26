@@ -92,7 +92,7 @@ safe_sudo() {
     if [ -z "$SUDO_PASS" ]; then
         echo -n "[safe_sudo] Enter password for $(whoami): "
         read -rs SUDO_PASS
-        echo "" 
+        echo ""
     fi
 
     if [ ! -t 0 ]; then
