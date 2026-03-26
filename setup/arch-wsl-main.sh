@@ -12,6 +12,105 @@ assert_running_arch() {
     fi
 }
 
+unlock_root() {
+    [[ "$(whoami)" != "root" ]] && return 0
+
+    local root_hash
+    root_hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
+    if [[ "$root_hash" =~ ^[\*!]*$ ]]; then
+        echo "Root password is not set. Please set it now."
+        passwd root
+    else
+        success "Root password is already set."
+    fi
+}
+
+setup_pacman_keys() {
+    [[ "$(whoami)" != "root" ]] && return 0
+
+    if pacman-key --list-keys &>/dev/null && pacman-key --list-keys archlinux &>/dev/null; then
+        success "Pacman keyring is already initialised and populated."
+        return 0
+    fi
+
+    info "Initialising pacman keyring..."
+    pacman-key --init &>/dev/null
+
+    info "Populating archlinux keys..."
+    pacman-key --populate archlinux &>/dev/null
+
+    success "Pacman keyring setup complete."
+}
+
+setup_sudo() {
+    [[ "$(whoami)" != "root" ]] && return 0
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        pacman -Sy --noconfirm --needed sudo
+    fi
+
+    if ! getent group sudo >/dev/null 2>&1; then
+        groupadd sudo
+    fi
+
+    if grep -q "^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
+        sed -i 's/^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL/%sudo ALL=(ALL:ALL) ALL/' /etc/sudoers
+    elif ! grep -q "^%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
+        echo "%sudo ALL=(ALL:ALL) ALL" >> /etc/sudoers
+    fi
+
+    success "sudo is configured."
+}
+
+setup_user() {
+    local script_dir="$1"
+
+    if [ -z "$script_dir" ]; then
+        error "setup_user requires <script_dir> argument"
+        return 1
+    fi
+
+    [[ "$(whoami)" != "root" ]] && return 0
+
+    if ! id -u fabi >/dev/null 2>&1; then
+        info "Creating user fabi..."
+        useradd -m -G sudo -u 1000 fabi
+
+        info "Please set a password for the new user 'fabi'."
+        passwd fabi || { error "Failed to set password. Setup cannot continue securely."; exit 1; }
+    fi
+
+    #set_wsl_default_user "fabi"
+
+    if [[ "$(id -un)" != "fabi" ]]; then
+        info "Switching to user fabi for the rest of the script..."
+        exec su - fabi -c "DOTFILES_FOLDER='$DOTFILES_FOLDER' DOTFILES_LOG_FILE='$DOTFILES_LOG_FILE' DOTFILES_TEMP_LOG_FILE='$DOTFILES_TEMP_LOG_FILE' \"$script_dir/$(basename "${BASH_SOURCE[0]}")\""
+    fi
+}
+
+change_wsl_distribution_conf() {
+    local conf_file="/etc/wsl-distribution.conf"
+    local desired
+    desired=$(cat <<'EOF'
+[oobe]
+defaultUid = 1000
+defaultName = archlinux
+
+[shortcut]
+icon = /usr/lib/wsl/archlinux.ico
+EOF
+    )
+
+    if [ -f "$conf_file" ] && [ "$(cat "$conf_file")" = "$desired" ]; then
+        success "$conf_file already has the desired content."
+        return 0
+    fi
+
+    info "Writing $conf_file..."
+    echo "$desired" | safe_sudo tee "$conf_file" > /dev/null
+    success "$conf_file has been updated."
+}
+
 set_wsl_default_user() {
     local CURRENT_USER
     CURRENT_USER=$(whoami)
@@ -42,55 +141,6 @@ set_wsl_default_user() {
     success "Done. WSL default user has been set to $TARGET_USER."
 }
 
-setup_user() {
-    local script_dir="$1"
-
-    if [ -z "$script_dir" ]; then
-        error "setup_user requires <script_dir> argument"
-        return 1
-    fi
-
-    if [[ "$(whoami)" != "root" ]]; then
-        return
-    fi
-
-    local root_hash
-    root_hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
-    if [[ "$root_hash" =~ ^[\*!]*$ ]]; then
-        echo "Root password is not set. Please set it now."
-        passwd root
-    fi
-
-    if ! command -v sudo >/dev/null 2>&1; then
-        pacman -Sy --noconfirm --needed sudo
-    fi
-
-    if ! getent group sudo >/dev/null 2>&1; then
-        groupadd sudo
-    fi
-
-    if grep -q "^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
-        sed -i 's/^#[[:space:]]*%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL/%sudo ALL=(ALL:ALL) ALL/' /etc/sudoers
-    elif ! grep -q "^%sudo[[:space:]]\+ALL=(ALL:ALL)[[:space:]]\+ALL" /etc/sudoers 2>/dev/null; then
-        echo "%sudo ALL=(ALL:ALL) ALL" >> /etc/sudoers
-    fi
-
-    if ! id -u fabi >/dev/null 2>&1; then
-        info "Creating user fabi..."
-        useradd -m -G sudo -u 1000 fabi
-
-        info "Please set a password for the new user 'fabi'."
-        passwd fabi || { error "Failed to set password. Setup cannot continue securely."; exit 1; }
-    fi
-
-    #set_wsl_default_user "fabi"
-
-    if [[ "$(id -un)" != "fabi" ]]; then
-        info "Switching to user fabi for the rest of the script..."
-        exec su - fabi -c "DOTFILES_FOLDER='$DOTFILES_FOLDER' DOTFILES_LOG_FILE='$DOTFILES_LOG_FILE' DOTFILES_TEMP_LOG_FILE='$DOTFILES_TEMP_LOG_FILE' \"$script_dir/$(basename "${BASH_SOURCE[0]}")\""
-    fi
-}
-
 install_packages() {
     if ! command -v sudo >/dev/null 2>&1; then
         error "sudo is not available; cannot install packages."
@@ -112,33 +162,13 @@ install_packages() {
     info "Package installation complete."
 }
 
-change_wsl_distribution_conf() {
-    local conf_file="/etc/wsl-distribution.conf"
-    local desired
-    desired=$(cat <<'EOF'
-[oobe]
-defaultUid = 1000
-defaultName = archlinux
-
-[shortcut]
-icon = /usr/lib/wsl/archlinux.ico
-EOF
-    )
-
-    if [ -f "$conf_file" ] && [ "$(cat "$conf_file")" = "$desired" ]; then
-        success "$conf_file already has the desired content."
-        return 0
-    fi
-
-    info "Writing $conf_file..."
-    echo "$desired" | safe_sudo tee "$conf_file" > /dev/null
-    success "$conf_file has been updated."
-}
-
 main() {
     init_logging
     assert_running_in_wsl
     assert_running_arch
+    unlock_root
+    setup_pacman_keys
+    setup_sudo
     setup_user "$SCRIPT_DIR"
     change_wsl_distribution_conf
     install_packages
