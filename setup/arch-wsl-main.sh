@@ -69,13 +69,6 @@ setup_sudo() {
 }
 
 setup_user() {
-    local script_dir="$1"
-
-    if [ -z "$script_dir" ]; then
-        error "setup_user requires <script_dir> argument"
-        return 1
-    fi
-
     [[ "$(whoami)" != "root" ]] && return 0
 
     if ! id -u fabi >/dev/null 2>&1; then
@@ -91,7 +84,7 @@ setup_user() {
     chmod 0440 "$TEMP_SUDOERS"
 
     info "Switching to user fabi for the rest of the script..."
-    exec sudo -u fabi DOTFILES_FOLDER="$DOTFILES_FOLDER" DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" "$script_dir/$(basename "${BASH_SOURCE[0]}")"
+    exec sudo -u fabi env DOTFILES_FOLDER="$DOTFILES_FOLDER" DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" bash "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 }
 
 remount_c() {
@@ -177,13 +170,13 @@ main() {
     unlock_root
     setup_pacman_keys
     setup_sudo
-    setup_user "$SCRIPT_DIR"
+    setup_user
 
     trap "sudo rm -f $TEMP_SUDOERS > /dev/null 2>&1" EXIT
     remount_c 1000
     change_wsl_distribution_conf
     install_packages
-    setup_dotfiles "$DOTFILES_FOLDER"
+    setup_dotfiles
     set_fish_default_shell
 }
 

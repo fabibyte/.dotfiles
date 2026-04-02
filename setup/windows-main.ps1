@@ -24,7 +24,6 @@ $Timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
 
 # Always log straight into the dotfiles folder
 $Script:LogFileActive = Join-Path $DotfilesFolder "setup_$Timestamp.log"
-$WslDotfilesFolder = "/mnt/c/Users/$env:USERNAME/.dotfiles"
 
 function Initialize-Logging {
     if (-not (Test-Path $DotfilesFolder)) {
@@ -41,10 +40,6 @@ function Write-Log {
         [ValidateSet('INFO', 'SUCCESS', 'WARNING', 'ERROR')][string]$Level,
         [string]$Message
     )
-
-    if (-not $LogFileActive) {
-        Initialize-Logging
-    }
 
     $esc = [char]27
     $colorMap = @{
@@ -121,8 +116,8 @@ function Invoke-WSLDotfilesSetup {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$DistroName,
-        [string]$WslDotfilesFolder,
-        [string]$WslLogFile,
+        [string]$DotfilesFolder,
+        [string]$LogFileActive,
         [string]$ScriptRoot
     )
 
@@ -131,7 +126,10 @@ function Invoke-WSLDotfilesSetup {
         $wslScriptDir = (wsl -d $DistroName -e wslpath -u $ScriptRoot).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $wslScriptDir) { throw "Failed to convert ScriptRoot ($ScriptRoot) to WSL path (Exit Code: $LASTEXITCODE)" }
 
-        $bashCmd = "DOTFILES_FOLDER='$WslDotfilesFolder' DOTFILES_LOG_FILE='$WslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
+        $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
+        $wslLogFile = (wsl -d $DistroName -e wslpath -u $LogFileActive).Trim()
+
+        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
         Write-Success 'Dotfiles setup completed inside WSL.'
@@ -142,12 +140,13 @@ function Invoke-WSLSyncthingDecryption {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$DistroName,
-        [string]$DotfilesWslPath
+        [string]$DotfilesFolder
     )
 
     if ($PSCmdlet.ShouldProcess($DistroName, 'Decrypt Syncthing key inside WSL')) {
         Write-Info 'Decrypting Syncthing key...'
-        $bashCmd = "cd '$DotfilesWslPath/syncthing' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem'"
+        $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
+        $bashCmd = "cd '$wslDotfilesFolder/syncthing' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Syncthing key decryption failed with exit code $LASTEXITCODE" }
         Write-Success 'Syncthing key decrypted.'
@@ -177,7 +176,7 @@ function Register-RebootTask {
     }
 }
 
-function Remove-RebootTask {
+function Unregister-RebootTask {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param([string]$TaskName)
 
@@ -261,7 +260,7 @@ function New-SymlinkTree {
     }
 }
 
-function Register-SetupScheduledTask {
+function Register-SetupScheduledTasks {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [array]$ScheduledTaskCommands
@@ -284,7 +283,7 @@ function Register-SetupScheduledTask {
     }
 }
 
-function Test-IsAppInstalled {
+function Test-AppInstalled {
     param(
         [scriptblock]$InstalledCheck
     )
@@ -361,7 +360,7 @@ function Install-NonWingetApps {
 
         Write-Info "Processing non-winget app: $($app.Name)"
 
-        if ($app.InstalledCheck -and (Test-IsAppInstalled -InstalledCheck $app.InstalledCheck)) {
+        if ($app.InstalledCheck -and (Test-AppInstalled -InstalledCheck $app.InstalledCheck)) {
             Write-Info "Already installed: $($app.Name)"
             continue
         }
@@ -451,10 +450,10 @@ function Install-NonWingetApps {
 }
 
 # Variables
-$rebootTaskName = 'ContinueSetupAfterReboot'
-$wslDistroName = 'archlinux'
+$RebootTaskName = 'ContinueSetupAfterReboot'
+$WslDistroName = 'archlinux'
 
-$nonWingetApps = @(
+$NonWingetApps = @(
     @{ 
         Name              = 'Honeygain'
         Type              = 'DirectExe'
@@ -476,7 +475,7 @@ $nonWingetApps = @(
     }
 )
 
-$scheduledTaskCommands = @(
+$ScheduledTaskCommands = @(
     @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
     @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
     @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\backup\backup.vbs'; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest' }
@@ -488,22 +487,21 @@ Initialize-Logging
 
 try {
     Write-Info "Version: 1.4.0"
-    Install-WSLPlatform -RebootTaskName $rebootTaskName -ScriptPath $PSCommandPath
-    Install-WSLDistroIfMissing -DistroName $wslDistroName | Out-Null
+    Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath
+    Install-WSLDistroIfMissing -DistroName $WslDistroName | Out-Null
     
     Install-WingetApps
-    # Install-NonWingetApps -NonWingetApps $nonWingetApps
+    # Install-NonWingetApps -NonWingetApps $NonWingetApps
 
-    $wslLogFile = (wsl -d $wslDistroName -e wslpath -u $LogFileActive).Trim()
-    Invoke-WSLDotfilesSetup -DistroName $wslDistroName -WslDotfilesFolder $WslDotfilesFolder -WslLogFile $wslLogFile -ScriptRoot $PSScriptRoot
-    Invoke-WSLSyncthingDecryption -DistroName $wslDistroName -DotfilesWslPath "/mnt/c/Users/$env:USERNAME/.dotfiles"
+    Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogFileActive $LogFileActive -ScriptRoot $PSScriptRoot
+    Invoke-WSLSyncthingDecryption -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder
 
     Write-Info 'Creating symbolic links...'
     New-Symlink -Src "$env:USERPROFILE\.dotfiles\wezterm\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
     New-SymlinkTree -Src "$env:USERPROFILE\.dotfiles\.ssh" -Tgt "$env:USERPROFILE\.ssh"
     New-SymlinkTree -Src "$env:USERPROFILE\.dotfiles\syncthing" -Tgt "$env:LOCALAPPDATA\Syncthing"
 
-    Register-SetupScheduledTask -ScheduledTaskCommands $scheduledTaskCommands
+    Register-SetupScheduledTasks -ScheduledTaskCommands $ScheduledTaskCommands
 
     Write-Success 'Windows setup completed successfully.'
 }
@@ -513,6 +511,6 @@ catch {
     throw
 }
 finally {
-    Remove-RebootTask -TaskName $rebootTaskName
+    Unregister-RebootTask -TaskName $RebootTaskName
     Read-Host 'Press Enter to close'
 }

@@ -5,17 +5,15 @@ set -euo pipefail
 DOTFILES_FOLDER="${DOTFILES_FOLDER:-$HOME/.dotfiles}"
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-$DOTFILES_FOLDER/setup_$(date +%Y%m%d_%H%M%S).log}"
 
-_log_file_active="$DOTFILES_LOG_FILE"
-
 init_logging() {
     local log_dir
-    log_dir="$(dirname "$_log_file_active")"
+    log_dir="$(dirname "$DOTFILES_LOG_FILE")"
     if [ ! -d "$log_dir" ]; then
         mkdir -p "$log_dir" 2>/dev/null
     fi
 
-    if [ ! -e "$_log_file_active" ]; then
-        touch "$_log_file_active" 2>/dev/null || true
+    if [ ! -e "$DOTFILES_LOG_FILE" ]; then
+        touch "$DOTFILES_LOG_FILE" 2>/dev/null || true
     fi
 }
 
@@ -34,11 +32,7 @@ write_log() {
         *)       printf "%s\n" "$formatted" ;; 
     esac
 
-    if [ -z "$_log_file_active" ]; then
-        init_logging
-    fi
-
-    printf "[%s] %s\n" "$timestamp" "$formatted" >> "$_log_file_active"
+    printf "[%s] %s\n" "$timestamp" "$formatted" >> "$DOTFILES_LOG_FILE"
 }
 
 info() {
@@ -65,20 +59,14 @@ assert_running_in_wsl() {
 }
 
 ensure_dotfiles_cloned() {
-    local dotfiles_folder="$1"
-    if [ -z "$dotfiles_folder" ]; then
-        error "ensure_dotfiles_cloned requires <dotfiles_folder> argument"
-        return 1
-    fi
-
-    if [ -d "$dotfiles_folder/.git" ]; then
-        info "Dotfiles already cloned at $dotfiles_folder."
+    if [ -d "$DOTFILES_FOLDER/.git" ]; then
+        info "Dotfiles already cloned at $DOTFILES_FOLDER."
         return
     fi
 
-    info "Cloning dotfiles into $dotfiles_folder..."
-    mkdir -p "$dotfiles_folder"
-    cd "$dotfiles_folder" || return 1
+    info "Cloning dotfiles into $DOTFILES_FOLDER..."
+    mkdir -p "$DOTFILES_FOLDER"
+    cd "$DOTFILES_FOLDER" || return 1
     
     git init
     git remote add origin "https://github.com/fabibyte/.dotfiles.git" || true
@@ -156,14 +144,8 @@ fetch_file() {
 }
 
 decrypt_ssh_keys() {
-    local dotfiles_folder="$1"
-    if [ -z "$dotfiles_folder" ]; then
-        error "decrypt_ssh_keys requires <dotfiles_folder> argument"
-        return 1
-    fi
-
-    local encrypted="$dotfiles_folder/.ssh/id_ed25519.enc"
-    local decrypted="$dotfiles_folder/.ssh/id_ed25519"
+    local encrypted="$DOTFILES_FOLDER/.ssh/id_ed25519.enc"
+    local decrypted="$DOTFILES_FOLDER/.ssh/id_ed25519"
 
     if [ -f "$decrypted" ]; then
         info "SSH key already decrypted."
@@ -180,7 +162,7 @@ decrypt_ssh_keys() {
     chmod 600 "$decrypted"
     success "SSH key decrypted."
 
-    link_tree "$dotfiles_folder/.ssh" "$HOME/.ssh"
+    link_tree "$DOTFILES_FOLDER/.ssh" "$HOME/.ssh"
 }
 
 set_fish_default_shell() {
@@ -262,21 +244,15 @@ install_shared_tooling() {
 }
 
 setup_dotfiles() {
-    local dotfiles_folder="$1"
-    if [ -z "$dotfiles_folder" ]; then
-        error "setup_dotfiles requires <dotfiles_folder> argument"
-        return 1
-    fi
-
-    ensure_dotfiles_cloned "$dotfiles_folder"
-    decrypt_ssh_keys "$dotfiles_folder"
+    ensure_dotfiles_cloned
+    decrypt_ssh_keys
 
     info "Linking config files..."
-    link_tree "$dotfiles_folder/fish" "$HOME/.config/fish"
-    link_tree "$dotfiles_folder/yazi" "$HOME/.config/yazi"
-    link_tree "$dotfiles_folder/zellij" "$HOME/.config/zellij"
-    link_tree "$dotfiles_folder/nvim" "$HOME/.config/nvim"
-    create_symlink "$dotfiles_folder/.gitconfig" "$HOME/.gitconfig"
+    link_tree "$DOTFILES_FOLDER/fish" "$HOME/.config/fish"
+    link_tree "$DOTFILES_FOLDER/yazi" "$HOME/.config/yazi"
+    link_tree "$DOTFILES_FOLDER/zellij" "$HOME/.config/zellij"
+    link_tree "$DOTFILES_FOLDER/nvim" "$HOME/.config/nvim"
+    create_symlink "$DOTFILES_FOLDER/.gitconfig" "$HOME/.gitconfig"
 
     info "Fetching themes..."
     fetch_file "https://raw.githubusercontent.com/catppuccin/yazi/refs/heads/main/themes/macchiato/catppuccin-macchiato-blue.toml" "$HOME/.config/yazi/theme.toml"
@@ -287,7 +263,7 @@ setup_dotfiles() {
 main() {
     init_logging
     install_shared_tooling
-    setup_dotfiles "$DOTFILES_FOLDER"
+    setup_dotfiles
     set_fish_default_shell
 }
 
