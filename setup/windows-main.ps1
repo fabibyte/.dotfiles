@@ -19,60 +19,20 @@ function Invoke-RunAsAdmin {
     }
 }
 
-# Setup logging variables
 $DotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
 $Timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
-$LogFileTemp = Join-Path $env:WINDIR "Temp\setup_$Timestamp.log"
-$LogFileFinal = Join-Path $DotfilesFolder ("setup_$Timestamp.log")
 
+# Always log straight into the dotfiles folder
+$Script:LogFileActive = Join-Path $DotfilesFolder "setup_$Timestamp.log"
 $WslDotfilesFolder = "/mnt/c/Users/$env:USERNAME/.dotfiles"
-$WslLogFileTemp = "/mnt/c/Windows/Temp/setup_$Timestamp.log"
-$WslLogFileFinal = "$WslDotfilesFolder/setup_$Timestamp.log"
-
-$LogFileActive = $null
 
 function Initialize-Logging {
-    if ((Test-Path $DotfilesFolder) -and (Test-Path "$DotfilesFolder\.git")) {
-        $Script:LogFileActive = $LogFileFinal
-    }
-    else {
-        $Script:LogFileActive = $LogFileTemp
-    }
-
-    $logDir = Split-Path $LogFileActive -Parent
-    if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    if (-not (Test-Path $DotfilesFolder)) {
+        New-Item -ItemType Directory -Path $DotfilesFolder -Force | Out-Null
     }
 
     if (-not (Test-Path $LogFileActive)) {
         New-Item -ItemType File -Path $LogFileActive -Force | Out-Null
-    }
-}
-
-function Complete-Logging {
-    if (-not (Test-Path $DotfilesFolder)) {
-        return
-    }
-
-    if ($LogFileActive -eq $LogFileTemp) {
-        if (Test-Path $LogFileFinal) {
-            $Script:LogFileActive = $LogFileFinal
-        }
-        elseif (Test-Path $LogFileTemp) {
-            $finalDir = Split-Path $LogFileFinal -Parent
-            if (-not (Test-Path $finalDir)) {
-                New-Item -ItemType Directory -Path $finalDir -Force | Out-Null
-            }
-
-            Get-Content -Path $LogFileTemp | Add-Content -Path $LogFileFinal
-            Remove-Item -Path $LogFileTemp -ErrorAction SilentlyContinue
-            
-            $Script:LogFileActive = $LogFileFinal
-            Write-Info "Merged temp log into: $LogFileFinal"
-        }
-        else {
-            $Script:LogFileActive = $LogFileFinal
-        }
     }
 }
 
@@ -100,7 +60,7 @@ function Write-Log {
     $formatted = "[$Level] $Message"
 
     Add-Content -Path $LogFileActive -Value "[$timestamp] $formatted"
-    Write-Output "${color}${formatted}$($colorMap['RESET'])"
+    Write-Host "${color}${formatted}$($colorMap['RESET'])"
 }
 
 function Write-Info { param([string]$Message) Write-Log -Level INFO -Message $Message }
@@ -162,8 +122,7 @@ function Invoke-WSLDotfilesSetup {
     param(
         [string]$DistroName,
         [string]$WslDotfilesFolder,
-        [string]$WslLogFileFinal,
-        [string]$WslLogFileTemp,
+        [string]$WslLogFile,
         [string]$ScriptRoot
     )
 
@@ -172,10 +131,9 @@ function Invoke-WSLDotfilesSetup {
         $wslScriptDir = (wsl -d $DistroName -e wslpath -u $ScriptRoot).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $wslScriptDir) { throw "Failed to convert ScriptRoot ($ScriptRoot) to WSL path (Exit Code: $LASTEXITCODE)" }
 
-        $bashCmd = "DOTFILES_FOLDER='$WslDotfilesFolder' DOTFILES_LOG_FILE='$WslLogFileFinal' DOTFILES_TEMP_LOG_FILE='$WslLogFileTemp' bash '$wslScriptDir/arch-wsl-main.sh'"
+        $bashCmd = "DOTFILES_FOLDER='$WslDotfilesFolder' DOTFILES_LOG_FILE='$WslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
-        # wsl --shutdown
         Write-Success 'Dotfiles setup completed inside WSL.'
     }
 }
@@ -348,8 +306,8 @@ function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
 
-    #$primary = '7zip.7zip', 'voidtools.Everything.Alpha', 'Mozilla.Firefox', 'RARLab.WinRAR', 'Zen-Team.Zen-Browser', 'NordSecurity.NordVPN', 'Google.GoogleDrive', 'PDFgear.PDFgear', 'WinDirStat.WinDirStat', 'Google.Chrome', 'Klocman.BulkCrapUninstaller', 'wez.wezterm', 'EaseUS.TodoBackup', 'Parsec.Parsec', 'FlorianHeidenreich.Mp3tag', 'BleachBit.BleachBit', 'Discord.Discord', 'FastCopy.FastCopy', 'Obsidian.Obsidian', 'ZedIndustries.Zed', 'Codeium.Windsurf', 'Microsoft.VisualStudioCode', 'Google.Antigravity', 'Anysphere.Cursor', 'Microsoft.PowerToys', '9NKSQGP7F2NH'
-    #$additional = 'Logitech.GHUB', 'Corsair.iCUE.5', 'RockstarGames.Launcher', 'Valve.Steam', 'Ubisoft.Connect', 'EpicGames.EpicGamesLauncher', 'GOG.Galaxy', 'ElectronicArts.EADesktop', 'Playnite.Playnite', 'ItchIo.Itch', 'Amazon.Games', 'XPDM5VSMTKQLBJ', '9NVMNJCR03XV', 'Syncthing.Syncthing'
+    $primary = '7zip.7zip', 'voidtools.Everything.Alpha', 'Mozilla.Firefox', 'RARLab.WinRAR', 'Zen-Team.Zen-Browser', 'NordSecurity.NordVPN', 'Google.GoogleDrive', 'PDFgear.PDFgear', 'WinDirStat.WinDirStat', 'Google.Chrome', 'Klocman.BulkCrapUninstaller', 'wez.wezterm', 'EaseUS.TodoBackup', 'Parsec.Parsec', 'FlorianHeidenreich.Mp3tag', 'BleachBit.BleachBit', 'Discord.Discord', 'FastCopy.FastCopy', 'Obsidian.Obsidian', 'ZedIndustries.Zed', 'Codeium.Windsurf', 'Microsoft.VisualStudioCode', 'Google.Antigravity', 'Anysphere.Cursor', 'Microsoft.PowerToys', '9NKSQGP7F2NH'
+    $additional = 'Logitech.GHUB', 'Corsair.iCUE.5', 'RockstarGames.Launcher', 'Valve.Steam', 'Ubisoft.Connect', 'EpicGames.EpicGamesLauncher', 'GOG.Galaxy', 'ElectronicArts.EADesktop', 'Playnite.Playnite', 'ItchIo.Itch', 'Amazon.Games', 'XPDM5VSMTKQLBJ', '9NVMNJCR03XV', 'Syncthing.Syncthing'
 
     $primary = '7zip.7zip'
     $additional = 'voidtools.Everything.Alpha'
@@ -364,14 +322,14 @@ function Install-WingetApps {
 
     if ($PSCmdlet.ShouldProcess('Primary Winget Apps', 'Install')) {
         Write-Info 'Installing primary winget apps...'
-        winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary
+        #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary
     }
 
     $response = Read-Host "Do you want to install optional winget apps (gaming and additional tools)? (y/n)"
     if ($response -match '^y|yes$') {
         if ($PSCmdlet.ShouldProcess('Optional Winget Apps', 'Install')) {
             Write-Info 'Installing optional winget apps...'
-            winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional
+            #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional
         }
     }
     else {
@@ -529,14 +487,15 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.3.9"
+    Write-Info "Version: 1.4.0"
     Install-WSLPlatform -RebootTaskName $rebootTaskName -ScriptPath $PSCommandPath
     Install-WSLDistroIfMissing -DistroName $wslDistroName | Out-Null
     
-    # Install-WingetApps
+    Install-WingetApps
     # Install-NonWingetApps -NonWingetApps $nonWingetApps
 
-    Invoke-WSLDotfilesSetup -DistroName $wslDistroName -WslDotfilesFolder $WslDotfilesFolder -WslLogFileFinal $WslLogFileFinal -WslLogFileTemp $WslLogFileTemp -ScriptRoot $PSScriptRoot
+    $wslLogFile = (wsl -d $wslDistroName -e wslpath -u $LogFileActive).Trim()
+    Invoke-WSLDotfilesSetup -DistroName $wslDistroName -WslDotfilesFolder $WslDotfilesFolder -WslLogFile $wslLogFile -ScriptRoot $PSScriptRoot
     Invoke-WSLSyncthingDecryption -DistroName $wslDistroName -DotfilesWslPath "/mnt/c/Users/$env:USERNAME/.dotfiles"
 
     Write-Info 'Creating symbolic links...'
@@ -554,7 +513,6 @@ catch {
     throw
 }
 finally {
-    Complete-Logging
     Remove-RebootTask -TaskName $rebootTaskName
     Read-Host 'Press Enter to close'
 }

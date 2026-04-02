@@ -4,17 +4,10 @@ set -euo pipefail
 
 DOTFILES_FOLDER="${DOTFILES_FOLDER:-$HOME/.dotfiles}"
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-$DOTFILES_FOLDER/setup_$(date +%Y%m%d_%H%M%S).log}"
-DOTFILES_TEMP_LOG_FILE="${DOTFILES_TEMP_LOG_FILE:-/mnt/c/Windows/Temp/setup_$(date +%Y%m%d_%H%M%S).log}"
 
-_log_file_active=""
+_log_file_active="$DOTFILES_LOG_FILE"
 
 init_logging() {
-    if [ -d "$DOTFILES_FOLDER" ] && [ -d "$DOTFILES_FOLDER/.git" ]; then
-        _log_file_active="$DOTFILES_LOG_FILE"
-    else
-        _log_file_active="$DOTFILES_TEMP_LOG_FILE"
-    fi
-
     local log_dir
     log_dir="$(dirname "$_log_file_active")"
     if [ ! -d "$log_dir" ]; then
@@ -64,22 +57,6 @@ error() {
     write_log "ERROR" "$*" >&2
 }
 
-finalize_logging() {
-    if [ -d "$DOTFILES_FOLDER" ] && [ -d "$DOTFILES_FOLDER/.git" ] && [ "$_log_file_active" = "$DOTFILES_TEMP_LOG_FILE" ]; then
-        mkdir -p "$(dirname "$DOTFILES_LOG_FILE")" 2>/dev/null || true
-        if [ -f "$DOTFILES_LOG_FILE" ]; then
-            _log_file_active="$DOTFILES_LOG_FILE"
-        elif [ -f "$DOTFILES_TEMP_LOG_FILE" ]; then
-            cat "$DOTFILES_TEMP_LOG_FILE" >> "$DOTFILES_LOG_FILE" 2>/dev/null || true
-            rm -f "$DOTFILES_TEMP_LOG_FILE" 2>/dev/null || true
-            _log_file_active="$DOTFILES_LOG_FILE"
-            info "Merged logs into $DOTFILES_LOG_FILE"
-        else
-            _log_file_active="$DOTFILES_LOG_FILE"
-        fi
-    fi
-}
-
 assert_running_in_wsl() {
     if ! grep -qi "microsoft" /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME-}" ]; then
         error "This script is intended to run inside WSL."
@@ -94,13 +71,22 @@ ensure_dotfiles_cloned() {
         return 1
     fi
 
-    if [ -d "$dotfiles_folder" ] && [ -d "$dotfiles_folder/.git" ]; then
+    if [ -d "$dotfiles_folder/.git" ]; then
         info "Dotfiles already cloned at $dotfiles_folder."
         return
     fi
 
     info "Cloning dotfiles into $dotfiles_folder..."
-    git clone "https://github.com/fabibyte/.dotfiles.git" "$dotfiles_folder"
+    mkdir -p "$dotfiles_folder"
+    cd "$dotfiles_folder" || return 1
+    
+    git init
+    git remote add origin "https://github.com/fabibyte/.dotfiles.git" || true
+    git fetch origin
+    git reset --hard origin/main
+    git branch -M main || true
+    git branch --set-upstream-to=origin/main main || true
+    
     success "Dotfiles cloned."
 }
 
@@ -303,7 +289,6 @@ main() {
     install_shared_tooling
     setup_dotfiles "$DOTFILES_FOLDER"
     set_fish_default_shell
-    finalize_logging
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

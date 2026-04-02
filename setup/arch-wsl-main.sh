@@ -91,7 +91,7 @@ setup_user() {
     chmod 0440 "$TEMP_SUDOERS"
 
     info "Switching to user fabi for the rest of the script..."
-    exec sudo -u fabi DOTFILES_FOLDER="$DOTFILES_FOLDER" DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" DOTFILES_TEMP_LOG_FILE="$DOTFILES_TEMP_LOG_FILE" "$script_dir/$(basename "${BASH_SOURCE[0]}")"
+    exec sudo -u fabi DOTFILES_FOLDER="$DOTFILES_FOLDER" DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" "$script_dir/$(basename "${BASH_SOURCE[0]}")"
 }
 
 remount_c() {
@@ -108,9 +108,7 @@ remount_c() {
     CURRENT_GID=$(stat -c '%g' /mnt/c)
 
     if [ "$CURRENT_UID" -ne "$TARGET_UID" ] || [ "$CURRENT_GID" -ne "$TARGET_GID" ]; then
-        # Step out of the directory to allow unmounting
         cd / || return 1
-        #sudo umount /mnt/c
         sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$TARGET_UID,gid=$TARGET_GID,cache=5,access=client,msize=65536"
     else
         echo "Already mounted with correct UID/GID."
@@ -153,10 +151,19 @@ install_packages() {
     sudo pacman -S --noconfirm --needed \
         git base-devel curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij mise wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
+    info "Installing mise..."
+    curl https://mise.run | sh
+
     info "Enabling sshd service..."
     sudo systemctl enable --now sshd || warning "Failed to enable / start sshd."
 
-    # install_shared_tooling
+    info "Configuring Docker..."
+    sudo groupadd docker
+    sudo usermod -aG docker $USER
+    sudo systemctl enable docker.service
+    sudo systemctl enable containerd.service
+
+    install_shared_tooling
 
     info "Package installation complete."
 }
@@ -178,7 +185,6 @@ main() {
     install_packages
     setup_dotfiles "$DOTFILES_FOLDER"
     set_fish_default_shell
-    finalize_logging
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" || "$0" == *"bash"* ]]; then
