@@ -33,6 +33,8 @@ function Initialize-Logging {
     if (-not (Test-Path $LogFileActive)) {
         New-Item -ItemType File -Path $LogFileActive -Force | Out-Null
     }
+
+    Start-Transcript -Path $LogFileActive -Append -NoClobber | Out-Null
 }
 
 function Write-Log {
@@ -54,8 +56,7 @@ function Write-Log {
     $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     $formatted = "[$Level] $Message"
 
-    Add-Content -Path $LogFileActive -Value "[$timestamp] $formatted"
-    Write-Host "${color}${formatted}$($colorMap['RESET'])"
+    Write-Host "${color}[$timestamp] $formatted$($colorMap['RESET'])"
 }
 
 function Write-Info { param([string]$Message) Write-Log -Level INFO -Message $Message }
@@ -129,7 +130,7 @@ function Invoke-WSLDotfilesSetup {
         $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
         $wslLogFile = (wsl -d $DistroName -e wslpath -u $LogFileActive).Trim()
 
-        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
+        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' DOTFILES_USE_TEE=0 bash '$wslScriptDir/arch-wsl-main.sh'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
         Write-Success 'Dotfiles setup completed inside WSL.'
@@ -512,5 +513,6 @@ catch {
 }
 finally {
     Unregister-RebootTask -TaskName $RebootTaskName
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     Read-Host 'Press Enter to close'
 }
