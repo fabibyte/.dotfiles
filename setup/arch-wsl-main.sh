@@ -155,10 +155,14 @@ install_packages() {
 	sudo systemctl enable --now sshd || warning "Failed to enable / start sshd."
 
 	info "Configuring Docker..."
-	sudo groupadd docker
-	sudo usermod -aG docker $USER
-	sudo systemctl enable docker.service
-	sudo systemctl enable containerd.service
+
+	if ! getent group docker >/dev/null 2>&1; then
+		sudo groupadd docker
+	fi
+
+	sudo usermod -aG docker "$USER"
+	sudo systemctl enable --now docker.service
+	sudo systemctl enable --now containerd.service
 
 	install_shared_tooling
 
