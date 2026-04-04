@@ -13,7 +13,7 @@ init_logging() {
 	fi
 
 	if [ ! -e "$DOTFILES_LOG_FILE" ]; then
-		touch "$DOTFILES_LOG_FILE" 2>/dev/null || true
+		touch "$DOTFILES_LOG_FILE" 2>/dev/null
 	fi
 
 	if [ "${DOTFILES_USE_TEE:-1}" -eq 1 ]; then
@@ -29,14 +29,18 @@ write_log() {
 	local timestamp
 	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 	local formatted="[$level] $message"
+	local color=""
+	local reset="\033[0m"
 
 	case "$level" in
-	INFO) printf "\033[0;36m[%s] %s\033[0m\n" "$timestamp" "$formatted" ;;
-	SUCCESS) printf "\033[0;32m[%s] %s\033[0m\n" "$timestamp" "$formatted" ;;
-	WARNING) printf "\033[0;33m[%s] %s\033[0m\n" "$timestamp" "$formatted" ;;
-	ERROR) printf "\033[0;31m[%s] %s\033[0m\n" "$timestamp" "$formatted" ;;
-	*) printf "[%s] %s\n" "$timestamp" "$formatted" ;;
+	INFO) color="\033[0;36m" ;;
+	SUCCESS) color="\033[0;32m" ;;
+	WARNING) color="\033[1;33m" ;;
+	ERROR) color="\033[0;31m" ;;
+	*) reset="" ;;
 	esac
+
+	printf "%b[%s] %s%b\n" "$color" "$timestamp" "$formatted" "$reset"
 }
 
 info() {
@@ -70,14 +74,14 @@ ensure_dotfiles_cloned() {
 
 	info "Cloning dotfiles into $DOTFILES_FOLDER..."
 	mkdir -p "$DOTFILES_FOLDER"
-	cd "$DOTFILES_FOLDER" || return 1
+	cd "$DOTFILES_FOLDER"
 
-	git init
-	git remote add origin "https://github.com/fabibyte/.dotfiles.git" || true
-	git fetch origin
-	git reset --hard origin/main
-	git branch -M main || true
-	git branch --set-upstream-to=origin/main main || true
+	git init >/dev/null
+	git remote add origin "https://github.com/fabibyte/.dotfiles.git" >/dev/null
+	git fetch origin >/dev/null
+	git reset --hard origin/main >/dev/null
+	git branch -M main >/dev/null
+	git branch --set-upstream-to=origin/main main >/dev/null
 
 	success "Dotfiles cloned."
 }
@@ -98,7 +102,7 @@ create_symlink() {
 
 	if [ -L "$tgt" ]; then
 		local current
-		current=$(readlink -f "$tgt" || true)
+		current=$(readlink -f "$tgt")
 		if [ "$current" = "$src" ]; then
 			info "Symlink already correct: $tgt -> $src"
 			return
@@ -194,7 +198,7 @@ set_fish_default_shell() {
 	fi
 
 	info "Setting fish as default shell..."
-	sudo chsh -s "$fish_shell" "$(whoami)" || warning "Failed to change shell. You may need to run this manually."
+	sudo chsh -s "$fish_shell" "$(whoami)"
 	success "Default shell set to fish."
 }
 
@@ -203,18 +207,19 @@ install_shared_tooling() {
 
 	if command -v ya >/dev/null 2>&1; then
 		info "Installing Yazi plugins..."
-		ya pkg add imsi32/yatline || warning "Failed to install Yazi plugin: imsi32/yatline"
-		ya pkg add imsi32/yatline-catppuccin || warning "Failed to install Yazi plugin: imsi32/yatline-catppuccin"
-		ya pkg add yazi-rs/plugins:full-border || warning "Failed to install Yazi plugin: yazi-rs/plugins:full-border"
+		ya pkg add imsi32/yatline >/dev/null
+		success "Installed yatline plugin."
+		ya pkg add imsi32/yatline-catppuccin >/dev/null
+		success "Installed yatline-catppuccin plugin."
+		ya pkg add yazi-rs/plugins:full-border >/dev/null
+		success "Installed full-border plugin."
+
+		if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
+			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" >/dev/null
+			success "Installed whoosh plugin."
+		fi
 	else
 		warning "ya (Yazi plugin installer) not found; skipping plugin installs."
-	fi
-
-	if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
-		git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi"
-		success "Installed whoosh.yazi plugin."
-	else
-		info "whoosh.yazi plugin already cloned."
 	fi
 
 	info "Selecting global language runtimes via mise..."
@@ -234,9 +239,9 @@ install_shared_tooling() {
 
 	if command -v pip >/dev/null 2>&1; then
 		info "Installing hererocks..."
-		pip install --user hererocks || warning "Failed to install hererocks."
+		pip install --user hererocks
 		if command -v hererocks >/dev/null 2>&1; then
-			hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest || warning "Failed to initialize hererocks."
+			hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest
 		else
 			warning "hererocks not available after installation."
 		fi

@@ -36,10 +36,10 @@ setup_pacman_keys() {
 	fi
 
 	info "Initialising pacman keyring..."
-	pacman-key --init &>/dev/null
+	pacman-key --init >/dev/null
 
 	info "Populating archlinux keys..."
-	pacman-key --populate archlinux &>/dev/null
+	pacman-key --populate archlinux >/dev/null
 
 	success "Pacman keyring setup complete."
 }
@@ -49,7 +49,7 @@ setup_sudo() {
 
 	if ! command -v sudo >/dev/null 2>&1; then
 		info "Installing sudo..."
-		pacman -Sy --noconfirm --needed sudo &>/dev/null
+		pacman -Sy --noconfirm --needed sudo >/dev/null
 	fi
 
 	if ! getent group sudo >/dev/null 2>&1; then
@@ -77,10 +77,7 @@ setup_user() {
 		useradd --create-home --groups sudo --uid 1000 --gid 1000 fabi
 
 		info "Please set a password for the new user 'fabi'."
-		passwd fabi || {
-			error "Failed to set password. Setup cannot continue securely."
-			exit 1
-		}
+		passwd fabi
 	fi
 
 	echo "fabi ALL=(ALL:ALL) NOPASSWD: ALL" >"$TEMP_SUDOERS"
@@ -104,7 +101,7 @@ remount_c() {
 	CURRENT_GID=$(stat -c '%g' /mnt/c)
 
 	if [ "$CURRENT_UID" -ne "$TARGET_UID" ] || [ "$CURRENT_GID" -ne "$TARGET_GID" ]; then
-		cd / || return 1
+		cd /
 		sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$TARGET_UID,gid=$TARGET_GID,cache=5,access=client,msize=65536"
 	else
 		echo "Already mounted with correct UID/GID."
@@ -142,17 +139,17 @@ install_packages() {
 	fi
 
 	info "Updating package cache..."
-	sudo pacman -Syu --noconfirm &>/dev/null
+	sudo pacman -Syu --noconfirm >/dev/null
 
 	info "Installing base packages..."
 	sudo pacman -S --noconfirm --needed \
-		git base-devel curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij mise wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
+		git base-devel curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
 	info "Installing mise..."
-	curl https://mise.run | sh
+	curl -fsSL https://mise.run | sh >/dev/null
 
 	info "Enabling sshd service..."
-	sudo systemctl enable --now sshd || warning "Failed to enable / start sshd."
+	sudo systemctl enable --now sshd >/dev/null
 
 	info "Configuring Docker..."
 
@@ -161,8 +158,8 @@ install_packages() {
 	fi
 
 	sudo usermod -aG docker "$USER"
-	sudo systemctl enable --now docker.service
-	sudo systemctl enable --now containerd.service
+	sudo systemctl enable --now docker.service >/dev/null
+	sudo systemctl enable --now containerd.service >/dev/null
 
 	install_shared_tooling
 

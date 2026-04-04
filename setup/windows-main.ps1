@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+    [string]$ResumeLogPath
+)
+
 $ErrorActionPreference = 'Stop'
 
 function Invoke-RunAsAdmin {
@@ -10,6 +15,10 @@ function Invoke-RunAsAdmin {
         }
 
         $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+        if ($ResumeLogPath) {
+            $arg += '-ResumeLogPath'
+            $arg += $ResumeLogPath
+        }
 
         # Remove any potential nulls (safe argument list)
         $arg = $arg | Where-Object { $_ -ne $null }
@@ -20,10 +29,14 @@ function Invoke-RunAsAdmin {
 }
 
 $DotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
-$Timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
 
-# Always log straight into the dotfiles folder
-$Script:LogFileActive = Join-Path $DotfilesFolder "setup_$Timestamp.log"
+if ($ResumeLogPath) {
+    $Script:LogFileActive = $ResumeLogPath
+}
+else {
+    $Timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+    $Script:LogFileActive = Join-Path $DotfilesFolder "setup_$Timestamp.log"
+}
 
 function Initialize-Logging {
     if (-not (Test-Path $DotfilesFolder)) {
@@ -43,20 +56,18 @@ function Write-Log {
         [string]$Message
     )
 
-    $esc = [char]27
     $colorMap = @{
-        INFO    = "$esc[36m"
-        SUCCESS = "$esc[32m"
-        WARNING = "$esc[33m"
-        ERROR   = "$esc[31m"
-        RESET   = "$esc[0m"
+        INFO    = 'Cyan'
+        SUCCESS = 'Green'
+        WARNING = 'Yellow'
+        ERROR   = 'Red'
     }
 
     $color = $colorMap[$Level]
     $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    $formatted = "[$Level] $Message"
+    $formatted = "[$timestamp] [$Level] $Message"
 
-    Write-Host "${color}[$timestamp] $formatted$($colorMap['RESET'])"
+    Write-Host $formatted -ForegroundColor $color
 }
 
 function Write-Info { param([string]$Message) Write-Log -Level INFO -Message $Message }
@@ -169,7 +180,7 @@ function Register-RebootTask {
     }
 
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register reboot scheduled task')) {
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ResumeLogPath `"$Script:LogFileActive`""
         $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -RunLevel 'Highest'
 
@@ -313,7 +324,7 @@ function Install-WingetApps {
     $additional = 'voidtools.Everything.Alpha'
 
     Write-Info "Remove garbage ..."
-    winget remove --all --exact --silent --nowarn --disable-interactivity --accept-source-agreements MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe
+    winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe
 
     Write-Info 'Installing updates'
     #winget update --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements
@@ -487,7 +498,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.4.1"
+    Write-Info "Version: 1.4.2"
     Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath
     Install-WSLDistroIfMissing -DistroName $WslDistroName | Out-Null
     
