@@ -76,12 +76,17 @@ ensure_dotfiles_cloned() {
 	mkdir -p "$DOTFILES_FOLDER"
 	cd "$DOTFILES_FOLDER"
 
-	git init >/dev/null
-	git remote add origin "https://github.com/fabibyte/.dotfiles.git" >/dev/null
-	git fetch origin >/dev/null
-	git reset --hard origin/main >/dev/null
-	git branch -M main >/dev/null
-	git branch --set-upstream-to=origin/main main >/dev/null
+	{
+		git init &&
+			git remote add origin "https://github.com/fabibyte/.dotfiles.git" &&
+			git fetch origin &&
+			git reset --hard origin/main &&
+			git branch -M main &&
+			git branch --set-upstream-to=origin/main main
+	} &>/dev/null || {
+		error "Failed to clone dotfiles."
+		exit 1
+	}
 
 	success "Dotfiles cloned."
 }
@@ -207,15 +212,30 @@ install_shared_tooling() {
 
 	if command -v ya >/dev/null 2>&1; then
 		info "Installing Yazi plugins..."
-		ya pkg add imsi32/yatline >/dev/null
+
+		ya pkg add imsi32/yatline &>/dev/null || {
+			error "Failed to install yatline plugin."
+			exit 1
+		}
 		success "Installed yatline plugin."
-		ya pkg add imsi32/yatline-catppuccin >/dev/null
+
+		ya pkg add imsi32/yatline-catppuccin &>/dev/null || {
+			error "Failed to install yatline-catppuccin plugin."
+			exit 1
+		}
 		success "Installed yatline-catppuccin plugin."
-		ya pkg add yazi-rs/plugins:full-border >/dev/null
+
+		ya pkg add yazi-rs/plugins:full-border &>/dev/null || {
+			error "Failed to install full-border plugin."
+			exit 1
+		}
 		success "Installed full-border plugin."
 
 		if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
-			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" >/dev/null
+			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" &>/dev/null || {
+				error "Failed to install whoosh plugin."
+				exit 1
+			}
 			success "Installed whoosh plugin."
 		fi
 	else
@@ -224,8 +244,6 @@ install_shared_tooling() {
 
 	info "Selecting global language runtimes via mise..."
 	if command -v mise >/dev/null 2>&1; then
-		eval "$(mise activate bash)"
-
 		for runtime in rust python ruby php go julia node java tree-sitter; do
 			if mise use -g "$runtime"; then
 				success "Global runtime set: $runtime"

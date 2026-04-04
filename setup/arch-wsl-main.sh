@@ -36,10 +36,16 @@ setup_pacman_keys() {
 	fi
 
 	info "Initialising pacman keyring..."
-	pacman-key --init >/dev/null
+	pacman-key --init &>/dev/null || {
+		error "Could not initialize pacman keyring."
+		exit 1
+	}
 
 	info "Populating archlinux keys..."
-	pacman-key --populate archlinux >/dev/null
+	pacman-key --populate archlinux &>/dev/null || {
+		error "Could not populate pacman keyring."
+		exit 1
+	}
 
 	success "Pacman keyring setup complete."
 }
@@ -146,10 +152,19 @@ install_packages() {
 		git base-devel curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
 	info "Installing mise..."
-	curl -fsSL https://mise.run | sh >/dev/null
+	curl -fsSL https://mise.run | sh &>/dev/null || {
+		error "Failed to install mise."
+		exit 1
+	}
+
+	info "Activating mise..."
+	eval $("/home/$USER/.local/bin/mise" activate bash)
 
 	info "Enabling sshd service..."
-	sudo systemctl enable --now sshd >/dev/null
+	sudo systemctl enable --now sshd &>/dev/null || {
+		error "Failed enable sshd."
+		exit 1
+	}
 
 	info "Configuring Docker..."
 
@@ -158,8 +173,14 @@ install_packages() {
 	fi
 
 	sudo usermod -aG docker "$USER"
-	sudo systemctl enable --now docker.service >/dev/null
-	sudo systemctl enable --now containerd.service >/dev/null
+	sudo systemctl enable --now docker.service &>/dev/null || {
+		error "Failed enable docker.service."
+		exit 1
+	}
+	sudo systemctl enable --now containerd.service &>/dev/null || {
+		error "Failed enable containerd.service."
+		exit 1
+	}
 
 	install_shared_tooling
 

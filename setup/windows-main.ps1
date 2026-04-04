@@ -324,16 +324,19 @@ function Install-WingetApps {
     $additional = 'voidtools.Everything.Alpha'
 
     Write-Info "Remove garbage ..."
-    winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe
+    winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements --source winget MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe
+    Write-Success "Garbage removed..."
 
-    Write-Info 'Installing updates'
+    Write-Info 'Installing updates...'
     #winget update --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements
+    Write-Success "Updates installed..."
 
     Write-Info 'Installing winget applications...'
 
     if ($PSCmdlet.ShouldProcess('Primary Winget Apps', 'Install')) {
         Write-Info 'Installing primary winget apps...'
         #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary
+        Write-Success "Installed primary winget apps..."
     }
 
     $response = Read-Host "Do you want to install optional winget apps (gaming and additional tools)? (y/n)"
@@ -341,6 +344,7 @@ function Install-WingetApps {
         if ($PSCmdlet.ShouldProcess('Optional Winget Apps', 'Install')) {
             Write-Info 'Installing optional winget apps...'
             #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional
+            Write-Success "Installed optional winget apps..."
         }
     }
     else {
@@ -498,7 +502,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.4.2"
+    Write-Info "Version: 1.4.3"
     Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath
     Install-WSLDistroIfMissing -DistroName $WslDistroName | Out-Null
     
