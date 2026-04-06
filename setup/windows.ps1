@@ -6,7 +6,7 @@ if (-not $PSCommandPath) {
     Write-Host "Running remotely... Initializing bootstrapper." -ForegroundColor Cyan
     
     $tempDir = Join-Path $env:TEMP ("dotfiles-setup-{0}" -f ([guid]::NewGuid()))
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $null = New-Item -ItemType Directory -Path $tempDir -Force
     
     $filesToFetch = @(
         'windows-main.ps1',

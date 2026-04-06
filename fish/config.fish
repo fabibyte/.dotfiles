@@ -13,7 +13,7 @@ if status is-interactive
     alias cr='clear'
 
     zoxide init fish | source
-    mise activate fish | source
+    /home/$USER/.local/bin/mise activate fish | source
 
     function y
         set tmp (mktemp -t "yazi-cwd.XXXXXX")

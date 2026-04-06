@@ -40,14 +40,12 @@ else {
 
 function Initialize-Logging {
     if (-not (Test-Path $DotfilesFolder)) {
-        New-Item -ItemType Directory -Path $DotfilesFolder -Force | Out-Null
+        $null = New-Item -ItemType Directory -Path $DotfilesFolder -Force
     }
 
     if (-not (Test-Path $LogFileActive)) {
-        New-Item -ItemType File -Path $LogFileActive -Force | Out-Null
+        $null = New-Item -ItemType File -Path $LogFileActive -Force
     }
-
-    Start-Transcript -Path $LogFileActive -Append -NoClobber | Out-Null
 }
 
 function Write-Log {
@@ -67,6 +65,7 @@ function Write-Log {
     $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     $formatted = "[$timestamp] [$Level] $Message"
 
+    Add-Content -Path $Script:LogFileActive -Value $formatted -Encoding utf8
     Write-Host $formatted -ForegroundColor $color
 }
 
@@ -74,6 +73,118 @@ function Write-Info { param([string]$Message) Write-Log -Level INFO -Message $Me
 function Write-Success { param([string]$Message) Write-Log -Level SUCCESS -Message $Message }
 function Write-WarningLog { param([string]$Message) Write-Log -Level WARNING -Message $Message }
 function Write-ErrorLog { param([string]$Message) Write-Log -Level ERROR -Message $Message }
+
+function Read-LoggedHost {
+    param([string]$Prompt)
+
+    if ($Prompt) {
+        Add-Content -Path $Script:LogFileActive -Value $Prompt -Encoding utf8
+    }
+
+    return Read-Host $Prompt
+}
+
+function ConvertTo-NativeArgumentString {
+    param([string[]]$ArgumentList)
+
+    if (-not $ArgumentList -or $ArgumentList.Count -eq 0) {
+        return ''
+    }
+
+    $quotedArgs = foreach ($argument in $ArgumentList) {
+        if ($null -eq $argument) {
+            '""'
+            continue
+        }
+
+        if ($argument -notmatch '[\s"]') {
+            $argument
+            continue
+        }
+
+        $escaped = $argument -replace '(\\*)"', '$1$1\"'
+        $escaped = $escaped -replace '(\\+)$', '$1$1'
+        '"' + $escaped + '"'
+    }
+
+    return ($quotedArgs -join ' ')
+}
+
+function Invoke-CommandLogged {
+    param(
+        [string]$Description,
+        [string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [switch]$AllowFailure
+    )
+
+    if (-not $FilePath) {
+        throw 'Invoke-CommandLogged requires a file path to execute.'
+    }
+
+    $utf8Encoding = New-Object System.Text.UTF8Encoding($false)
+    $logWriter = New-Object System.IO.StreamWriter($Script:LogFileActive, $true, $utf8Encoding)
+
+    try {
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+            $logText = $_.ToString() -replace "`0", ''
+            $logWriter.WriteLine($logText)
+            $logWriter.Flush()
+            $_
+        } | Out-Host
+
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $logWriter.Dispose()
+    }
+
+    if (-not $AllowFailure -and $exitCode -ne 0) {
+        throw "$Description failed with exit code $exitCode"
+    }
+
+    return $exitCode
+}
+
+function Invoke-WithRetries {
+    param(
+        [string]$Description,
+        [int]$MaxAttempts = 3,
+        [scriptblock]$Action,
+        [scriptblock]$OnRetry
+    )
+
+    if (-not $Action) {
+        throw 'Invoke-WithRetries requires an action to execute.'
+    }
+
+    $lastError = $null
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            $result = & $Action
+            if ($result -ne $false) {
+                return
+            }
+
+            $lastError = "$Description failed."
+        }
+        catch {
+            $lastError = $_.Exception.Message
+        }
+
+        if ($OnRetry) {
+            & $OnRetry $attempt $MaxAttempts $lastError
+        }
+
+        if ($attempt -lt $MaxAttempts) {
+            $remaining = $MaxAttempts - $attempt
+            Write-WarningLog "$Description failed. $remaining attempt(s) remaining."
+        }
+    }
+
+    throw "$Description failed after $MaxAttempts attempts. Last error: $lastError"
+}
 
 function Install-WSLPlatform {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -93,7 +204,7 @@ function Install-WSLPlatform {
     if (-not $isInstalled) {
         if ($PSCmdlet.ShouldProcess('WSL', 'Install platform')) {
             Write-Info 'WSL platform is not installed; installing now (platform only)...'
-            wsl --install --no-distribution
+            $null = Invoke-CommandLogged -Description 'WSL platform installation' -FilePath 'wsl' -ArgumentList @('--install', '--no-distribution')
                 
             Register-RebootTask -TaskName $RebootTaskName -ScriptPath $ScriptPath
             Write-Info 'Rebooting to continue setup...'
@@ -115,7 +226,7 @@ function Install-WSLDistroIfMissing {
     if (-not $installed) {
         if ($PSCmdlet.ShouldProcess($DistroName, 'Install WSL distro')) {
             Write-Info "Installing WSL distro: $DistroName"
-            wsl --install -d $DistroName --no-launch
+            $null = Invoke-CommandLogged -Description "WSL distro installation ($DistroName)" -FilePath 'wsl' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
             return $true
         }
     }
@@ -141,7 +252,7 @@ function Invoke-WSLDotfilesSetup {
         $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
         $wslLogFile = (wsl -d $DistroName -e wslpath -u $LogFileActive).Trim()
 
-        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' DOTFILES_USE_TEE=0 bash '$wslScriptDir/arch-wsl-main.sh'"
+        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
         wsl -d $DistroName -e bash -c $bashCmd
         if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
         Write-Success 'Dotfiles setup completed inside WSL.'
@@ -158,9 +269,21 @@ function Invoke-WSLSyncthingDecryption {
     if ($PSCmdlet.ShouldProcess($DistroName, 'Decrypt Syncthing key inside WSL')) {
         Write-Info 'Decrypting Syncthing key...'
         $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
-        $bashCmd = "cd '$wslDotfilesFolder/syncthing' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem'"
-        wsl -d $DistroName -e bash -c $bashCmd
-        if ($LASTEXITCODE -ne 0) { throw "Syncthing key decryption failed with exit code $LASTEXITCODE" }
+        $decryptAction = {
+            $bashCmd = "cd '$wslDotfilesFolder/syncthing' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem'  >/dev/null 2>&1"
+            wsl -d $DistroName -e bash -c $bashCmd
+            if ($LASTEXITCODE -ne 0) {
+                return $false
+            }
+
+            return $true
+        }
+        $cleanupAction = {
+            param($Attempt, $MaxAttempts, $LastError)
+            wsl -d $DistroName -e bash -c "rm -f '$wslDotfilesFolder/syncthing/key.pem'"
+        }
+
+        Invoke-WithRetries -Description 'Syncthing key decryption' -MaxAttempts 3 -Action $decryptAction -OnRetry $cleanupAction
         Write-Success 'Syncthing key decrypted.'
     }
 }
@@ -246,10 +369,10 @@ function New-Symlink {
 
     $tgtDir = Split-Path -Parent $Tgt
     if (-not (Test-Path $tgtDir)) {
-        New-Item -ItemType Directory -Path $tgtDir -Force | Out-Null
+        $null = New-Item -ItemType Directory -Path $tgtDir -Force
     }
 
-    New-Item -ItemType SymbolicLink -Path $Tgt -Target $Src -Force | Out-Null
+    $null = New-Item -ItemType SymbolicLink -Path $Tgt -Target $Src -Force
     Write-Success "Linked $Tgt -> $Src"
 }
 
@@ -317,14 +440,81 @@ function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
 
-    $primary = '7zip.7zip', 'voidtools.Everything.Alpha', 'Mozilla.Firefox', 'RARLab.WinRAR', 'Zen-Team.Zen-Browser', 'NordSecurity.NordVPN', 'Google.GoogleDrive', 'PDFgear.PDFgear', 'WinDirStat.WinDirStat', 'Google.Chrome', 'Klocman.BulkCrapUninstaller', 'wez.wezterm', 'EaseUS.TodoBackup', 'Parsec.Parsec', 'FlorianHeidenreich.Mp3tag', 'BleachBit.BleachBit', 'Discord.Discord', 'FastCopy.FastCopy', 'Obsidian.Obsidian', 'ZedIndustries.Zed', 'Codeium.Windsurf', 'Microsoft.VisualStudioCode', 'Google.Antigravity', 'Anysphere.Cursor', 'Microsoft.PowerToys', '9NKSQGP7F2NH'
-    $additional = 'Logitech.GHUB', 'Corsair.iCUE.5', 'RockstarGames.Launcher', 'Valve.Steam', 'Ubisoft.Connect', 'EpicGames.EpicGamesLauncher', 'GOG.Galaxy', 'ElectronicArts.EADesktop', 'Playnite.Playnite', 'ItchIo.Itch', 'Amazon.Games', 'XPDM5VSMTKQLBJ', '9NVMNJCR03XV', 'Syncthing.Syncthing'
+    $primary = @(
+        '7zip.7zip',
+        'voidtools.Everything.Alpha',
+        'Mozilla.Firefox',
+        'RARLab.WinRAR',
+        'Zen-Team.Zen-Browser',
+        'NordSecurity.NordVPN',
+        'Google.GoogleDrive',
+        'PDFgear.PDFgear',
+        'WinDirStat.WinDirStat',
+        'Google.Chrome',
+        'Klocman.BulkCrapUninstaller',
+        'wez.wezterm',
+        'EaseUS.TodoBackup',
+        'Parsec.Parsec',
+        'FlorianHeidenreich.Mp3tag',
+        'BleachBit.BleachBit',
+        'Discord.Discord',
+        'FastCopy.FastCopy',
+        'Obsidian.Obsidian',
+        'Microsoft.VisualStudioCode',
+        'Microsoft.PowerToys',
+        '9NKSQGP7F2NH'
+    )
+    $additional = @(
+        'Logitech.GHUB',
+        'Corsair.iCUE.5',
+        'RockstarGames.Launcher',
+        'Valve.Steam',
+        'Ubisoft.Connect',
+        'EpicGames.EpicGamesLauncher',
+        'GOG.Galaxy',
+        'ElectronicArts.EADesktop',
+        'Playnite.Playnite',
+        'ItchIo.Itch',
+        'Amazon.Games',
+        'XPDM5VSMTKQLBJ',
+        '9NVMNJCR03XV',
+        'Syncthing.Syncthing'
+    )
+    $preinstalledPackagesToRemove = @(
+        'MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt',
+        'MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe',
+        'MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe',
+        'MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe',
+        'MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe'
+    )
 
-    $primary = '7zip.7zip'
-    $additional = 'voidtools.Everything.Alpha'
+    $primary = @(
+        '7zip.7zip'
+    )
+    $additional = @(
+        'voidtools.Everything.Alpha'
+    )
 
     Write-Info "Remove garbage ..."
-    winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements --source winget MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe
+    foreach ($package in $preinstalledPackagesToRemove) {
+        Write-Info "Removing package: $package"
+    }
+    $null = winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements --source winget $preinstalledPackagesToRemove > $null 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget remove preinstalled apps failed with exit code $LASTEXITCODE"
+    }
     Write-Success "Garbage removed..."
 
     Write-Info 'Installing updates...'
@@ -335,15 +525,27 @@ function Install-WingetApps {
 
     if ($PSCmdlet.ShouldProcess('Primary Winget Apps', 'Install')) {
         Write-Info 'Installing primary winget apps...'
-        #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary
+        foreach ($package in $primary) {
+            Write-Info "Installing primary package: $package"
+        }
+        #$null = winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary > $null 2>&1
+        #if ($LASTEXITCODE -ne 0) {
+        #    throw "winget install primary apps failed with exit code $LASTEXITCODE"
+        #}
         Write-Success "Installed primary winget apps..."
     }
 
-    $response = Read-Host "Do you want to install optional winget apps (gaming and additional tools)? (y/n)"
+    $response = Read-LoggedHost "Do you want to install optional winget apps (gaming and additional tools)? (y/n)"
     if ($response -match '^y|yes$') {
         if ($PSCmdlet.ShouldProcess('Optional Winget Apps', 'Install')) {
             Write-Info 'Installing optional winget apps...'
-            #winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional
+            foreach ($package in $additional) {
+                Write-Info "Installing optional package: $package"
+            }
+            #$null = winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional > $null 2>&1
+            #if ($LASTEXITCODE -ne 0) {
+            #    throw "winget install optional apps failed with exit code $LASTEXITCODE"
+            #}
             Write-Success "Installed optional winget apps..."
         }
     }
@@ -365,7 +567,7 @@ function Install-NonWingetApps {
     Write-Info 'Installing non-winget applications...'
 
     $tempDir = Join-Path $env:TEMP 'dotfiles-nonwinget'
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $null = New-Item -ItemType Directory -Path $tempDir -Force
 
     foreach ($app in $NonWingetApps) {
         if (-not $app.Enabled) { continue }
@@ -439,7 +641,7 @@ function Install-NonWingetApps {
                     $remoteScriptPath = Join-Path $tempDir "$($app.Name)-remote.ps1"
                     Invoke-WebRequest -Uri $app.Uri -OutFile $remoteScriptPath -UseBasicParsing
 
-                    & powershell -NoProfile -ExecutionPolicy Bypass -File $remoteScriptPath
+                    $null = Invoke-CommandLogged -Description "Remote script install for $($app.Name)" -FilePath 'powershell' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $remoteScriptPath)
                 }
                 default {
                     throw "Unknown non-winget app type: $($app.Type)"
@@ -502,10 +704,10 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.4.3"
+    Write-Info "Version: 1.5.6"
     Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath
-    Install-WSLDistroIfMissing -DistroName $WslDistroName | Out-Null
-    
+    $null = Install-WSLDistroIfMissing -DistroName $WslDistroName
+
     Install-WingetApps
     # Install-NonWingetApps -NonWingetApps $NonWingetApps
 
@@ -528,6 +730,5 @@ catch {
 }
 finally {
     Unregister-RebootTask -TaskName $RebootTaskName
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
-    Read-Host 'Press Enter to close'
+    $null = Read-LoggedHost 'Press Enter to close'
 }

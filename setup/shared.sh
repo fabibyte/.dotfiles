@@ -16,10 +16,7 @@ init_logging() {
 		touch "$DOTFILES_LOG_FILE" 2>/dev/null
 	fi
 
-	if [ "${DOTFILES_USE_TEE:-1}" -eq 1 ]; then
-		export DOTFILES_USE_TEE=0
-		exec > >(tee -a "$DOTFILES_LOG_FILE") 2>&1
-	fi
+	exec > >(tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' >>"$DOTFILES_LOG_FILE")) 2>&1
 }
 
 write_log() {
@@ -59,10 +56,19 @@ error() {
 	write_log "ERROR" "$*" >&2
 }
 
+abort() {
+	local code=1
+	if [[ "$1" =~ ^[0-9]+$ ]]; then
+		code="$1"
+		shift
+	fi
+	error "$*"
+	exit "$code"
+}
+
 assert_running_in_wsl() {
 	if ! grep -qi "microsoft" /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME-}" ]; then
-		error "This script is intended to run inside WSL."
-		exit 1
+		abort "This script is intended to run inside WSL."
 	fi
 }
 
@@ -83,10 +89,7 @@ ensure_dotfiles_cloned() {
 			git reset --hard origin/main &&
 			git branch -M main &&
 			git branch --set-upstream-to=origin/main main
-	} &>/dev/null || {
-		error "Failed to clone dotfiles."
-		exit 1
-	}
+	} &>/dev/null || abort "Failed to clone dotfiles."
 
 	success "Dotfiles cloned."
 }
@@ -159,6 +162,9 @@ fetch_file() {
 decrypt_ssh_keys() {
 	local encrypted="$DOTFILES_FOLDER/.ssh/id_ed25519.enc"
 	local decrypted="$DOTFILES_FOLDER/.ssh/id_ed25519"
+	local max_attempts=3
+	local attempt
+	local passphrase
 
 	if [ -f "$decrypted" ]; then
 		info "SSH key already decrypted."
@@ -171,11 +177,32 @@ decrypt_ssh_keys() {
 	fi
 
 	info "Decrypting SSH keys..."
-	openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$encrypted" -out "$decrypted"
-	chmod 600 "$decrypted"
-	success "SSH key decrypted."
 
-	link_tree "$DOTFILES_FOLDER/.ssh" "$HOME/.ssh"
+	for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+		if [ ! -r /dev/tty ]; then
+			error "SSH key decryption failed after $max_attempts attempts."
+			return 1
+		fi
+
+		read -r -s -p "enter AES-256-CBC decryption password: " passphrase </dev/tty
+		printf '\n' >/dev/tty
+
+		if printf '%s' "$passphrase" | openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -pass stdin -in "$encrypted" -out "$decrypted" >/dev/null 2>&1; then
+			chmod 600 "$decrypted"
+			success "SSH key decrypted."
+			link_tree "$DOTFILES_FOLDER/.ssh" "$HOME/.ssh"
+			return
+		fi
+
+		rm -f "$decrypted"
+
+		if [ "$attempt" -lt "$max_attempts" ]; then
+			warning "SSH key decryption failed. $((max_attempts - attempt)) attempt(s) remaining."
+		else
+			error "SSH key decryption failed after $max_attempts attempts."
+			return 1
+		fi
+	done
 }
 
 set_fish_default_shell() {
@@ -213,29 +240,17 @@ install_shared_tooling() {
 	if command -v ya >/dev/null 2>&1; then
 		info "Installing Yazi plugins..."
 
-		ya pkg add imsi32/yatline &>/dev/null || {
-			error "Failed to install yatline plugin."
-			exit 1
-		}
+		ya pkg add imsi32/yatline &>/dev/null || abort "Failed to install yatline plugin."
 		success "Installed yatline plugin."
 
-		ya pkg add imsi32/yatline-catppuccin &>/dev/null || {
-			error "Failed to install yatline-catppuccin plugin."
-			exit 1
-		}
+		ya pkg add imsi32/yatline-catppuccin &>/dev/null || abort "Failed to install yatline-catppuccin plugin."
 		success "Installed yatline-catppuccin plugin."
 
-		ya pkg add yazi-rs/plugins:full-border &>/dev/null || {
-			error "Failed to install full-border plugin."
-			exit 1
-		}
+		ya pkg add yazi-rs/plugins:full-border &>/dev/null || abort "Failed to install full-border plugin."
 		success "Installed full-border plugin."
 
 		if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
-			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" &>/dev/null || {
-				error "Failed to install whoosh plugin."
-				exit 1
-			}
+			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" &>/dev/null || abort "Failed to install whoosh plugin."
 			success "Installed whoosh plugin."
 		fi
 	else
