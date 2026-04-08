@@ -7,6 +7,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$Script:HadSetupError = $false
+$Script:SetupCompleted = $false
+$Script:FlagArgumentsProvided = @{
+    InstallOptionalWingetApps = $PSBoundParameters.ContainsKey('InstallOptionalWingetApps')
+    SetupSyncthing            = $PSBoundParameters.ContainsKey('SetupSyncthing')
+    SetupBackupTask           = $PSBoundParameters.ContainsKey('SetupBackupTask')
+}
 
 function Invoke-RunAsAdmin {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -22,17 +29,17 @@ function Invoke-RunAsAdmin {
             $arg += '-ResumeLogPath'
             $arg += $ResumeLogPath
         }
-        if ($null -ne $InstallOptionalWingetApps) {
+        if ($Script:FlagArgumentsProvided.InstallOptionalWingetApps) {
             $arg += '-InstallOptionalWingetApps'
-            $arg += $InstallOptionalWingetApps
+            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$InstallOptionalWingetApps))
         }
-        if ($null -ne $SetupSyncthing) {
+        if ($Script:FlagArgumentsProvided.SetupSyncthing) {
             $arg += '-SetupSyncthing'
-            $arg += $SetupSyncthing
+            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$SetupSyncthing))
         }
-        if ($null -ne $SetupBackupTask) {
+        if ($Script:FlagArgumentsProvided.SetupBackupTask) {
             $arg += '-SetupBackupTask'
-            $arg += $SetupBackupTask
+            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$SetupBackupTask))
         }
 
         # Remove any potential nulls (safe argument list)
@@ -99,9 +106,36 @@ function Read-LoggedHost {
     return Read-Host $Prompt
 }
 
-function Get-SetupPreferenceValue {
+function ConvertTo-NullableBooleanArgument {
     param(
-        [Nullable[bool]]$CurrentValue,
+        [AllowNull()][object]$Value,
+        [string]$ParameterName
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [bool]) {
+        return $Value
+    }
+
+    $text = "$Value".Trim()
+    if ([string]::IsNullOrEmpty($text)) {
+        return $null
+    }
+
+    switch -Regex ($text) {
+        '^(?i:true|1|yes|y)$' { return $true }
+        '^(?i:false|0|no|n)$' { return $false }
+        default { throw "Invalid boolean value '$text' for $ParameterName." }
+    }
+}
+
+function Resolve-SetupPreference {
+    param(
+        [AllowNull()][Nullable[bool]]$CurrentValue,
+        [string]$ParameterName,
         [string]$Prompt
     )
 
@@ -109,11 +143,17 @@ function Get-SetupPreferenceValue {
         return [bool]$CurrentValue
     }
 
-    $response = Read-LoggedHost $Prompt
-    return ($response -match '^(?i:y|yes)$')
+    while ($true) {
+        $response = ConvertTo-NullableBooleanArgument -Value (Read-LoggedHost $Prompt) -ParameterName $ParameterName
+        if ($null -ne $response) {
+            return $response
+        }
+
+        Write-WarningLog "Please answer '$ParameterName' with yes or no."
+    }
 }
 
-function ConvertTo-BooleanString {
+function ConvertTo-BooleanArgumentString {
     param([bool]$Value)
 
     if ($Value) {
@@ -168,7 +208,19 @@ function Invoke-NativeProcess {
 
     try {
         $null = New-Item -ItemType Directory -Path $tempDir -Force
-        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $startProcessParams = @{
+            FilePath               = $FilePath
+            Wait                   = $true
+            PassThru               = $true
+            NoNewWindow            = $true
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError  = $stderrPath
+        }
+        if ($ArgumentList -and $ArgumentList.Count -gt 0) {
+            $startProcessParams.ArgumentList = $ArgumentList
+        }
+
+        $process = Start-Process @startProcessParams
         $exitCode = $process.ExitCode
 
         if (Test-Path -LiteralPath $stdoutPath) {
@@ -243,6 +295,20 @@ function Escape-BashSingleQuotedString {
 
 function Test-IsInteractiveSession {
     return (-not $ResumeLogPath) -and [Environment]::UserInteractive -and ($Host.Name -eq 'ConsoleHost')
+}
+
+function Remove-BootstrapDirectoryIfPresent {
+    $bootstrapRoot = Split-Path -Path $PSScriptRoot -Leaf
+    if ($bootstrapRoot -ne '.windows-bootstrap') {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $PSScriptRoot)) {
+        return
+    }
+
+    $cleanupScript = "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '$($PSScriptRoot.Replace("'", "''"))' -Recurse -Force -ErrorAction SilentlyContinue"
+    $null = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', $cleanupScript) -NoNewWindow
 }
 
 function Invoke-WithRetries {
@@ -416,9 +482,9 @@ function Register-RebootTask {
     }
 
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register reboot scheduled task')) {
-        $installOptionalWingetAppsArg = ConvertTo-BooleanString -Value $InstallOptionalWingetApps
-        $setupSyncthingArg = ConvertTo-BooleanString -Value $SetupSyncthing
-        $setupBackupTaskArg = ConvertTo-BooleanString -Value $SetupBackupTask
+        $installOptionalWingetAppsArg = ConvertTo-BooleanArgumentString -Value $InstallOptionalWingetApps
+        $setupSyncthingArg = ConvertTo-BooleanArgumentString -Value $SetupSyncthing
+        $setupBackupTaskArg = ConvertTo-BooleanArgumentString -Value $SetupBackupTask
         $taskArgs = @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
@@ -833,10 +899,10 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.5.6"
-    $Script:InstallOptionalWingetApps = Get-SetupPreferenceValue -CurrentValue $InstallOptionalWingetApps -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
-    $Script:SetupSyncthing = Get-SetupPreferenceValue -CurrentValue $SetupSyncthing -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
-    $Script:SetupBackupTask = Get-SetupPreferenceValue -CurrentValue $SetupBackupTask -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
+    Write-Info "Version: 1.6.4"
+    $Script:InstallOptionalWingetApps = Resolve-SetupPreference -CurrentValue $InstallOptionalWingetApps -ParameterName 'InstallOptionalWingetApps' -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
+    $Script:SetupSyncthing = Resolve-SetupPreference -CurrentValue $SetupSyncthing -ParameterName 'SetupSyncthing' -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
+    $Script:SetupBackupTask = Resolve-SetupPreference -CurrentValue $SetupBackupTask -ParameterName 'SetupBackupTask' -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
 
     $ScheduledTaskCommands = @(
         @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = $true },
@@ -860,16 +926,21 @@ try {
 
     Register-SetupScheduledTasks -ScheduledTaskCommands $ScheduledTaskCommands
 
+    $Script:SetupCompleted = $true
     Write-Success 'Windows setup completed successfully.'
 }
 catch {
+    $Script:HadSetupError = $true
     Write-ErrorLog "An error occurred: $($_.Exception.Message)"
     Write-ErrorLog "Stack trace: $($_.ScriptStackTrace)"
     throw
 }
 finally {
     Unregister-RebootTask -TaskName $RebootTaskName
-    if (Test-IsInteractiveSession) {
+    if ($Script:SetupCompleted) {
+        Remove-BootstrapDirectoryIfPresent
+    }
+    if ($Script:HadSetupError -or (Test-IsInteractiveSession)) {
         $null = Read-LoggedHost 'Press Enter to close'
     }
 }

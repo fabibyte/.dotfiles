@@ -161,6 +161,26 @@ fetch_file() {
     fi
 }
 
+cleanup_bootstrap_dir_if_present() {
+    local bootstrap_dir="$1"
+    local expected_name="$2"
+
+    if [[ -z "$bootstrap_dir" || -z "$expected_name" ]]; then
+        error "cleanup_bootstrap_dir_if_present requires <dir> and <expected-name> arguments"
+        return 1
+    fi
+
+    if [[ ! -d "$bootstrap_dir" ]]; then
+        return 0
+    fi
+
+    if [[ "$(basename "$bootstrap_dir")" != "$expected_name" ]]; then
+        return 0
+    fi
+
+    nohup sh -c 'sleep 1; rm -rf -- "$1"' _ "$bootstrap_dir" >/dev/null 2>&1 &
+}
+
 decrypt_ssh_keys() {
     local encrypted="$DOTFILES_FOLDER/.ssh/id_ed25519.enc"
     local decrypted="$DOTFILES_FOLDER/.ssh/id_ed25519"

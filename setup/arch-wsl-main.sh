@@ -11,6 +11,7 @@ readonly BOOTSTRAP_GID="1000"
 readonly SUDO_GROUP_GID="27"
 readonly TEMP_SUDOERS="/etc/sudoers.d/passwordless-bootstrap"
 readonly SUDO_GROUP_CONFIG="/etc/sudoers.d/10-sudo-group"
+SETUP_COMPLETED="false"
 
 cleanup_temp_sudoers() {
     if [[ -f "$TEMP_SUDOERS" ]]; then
@@ -218,6 +219,8 @@ main() {
     install_packages
     setup_dotfiles
     set_fish_default_shell
+    SETUP_COMPLETED="true"
+    cleanup_bootstrap_dir_if_present "$SCRIPT_DIR" '.arch-wsl-bootstrap'
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" || "$0" == *"bash"* ]]; then
