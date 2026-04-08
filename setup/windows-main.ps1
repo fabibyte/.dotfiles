@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$ResumeLogPath
+    [string]$ResumeLogPath,
+    [string]$InstallOptionalWingetApps,
+    [string]$SetupSyncthing,
+    [string]$SetupBackupTask
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +21,18 @@ function Invoke-RunAsAdmin {
         if ($ResumeLogPath) {
             $arg += '-ResumeLogPath'
             $arg += $ResumeLogPath
+        }
+        if ($InstallOptionalWingetApps) {
+            $arg += '-InstallOptionalWingetApps'
+            $arg += $InstallOptionalWingetApps
+        }
+        if ($SetupSyncthing) {
+            $arg += '-SetupSyncthing'
+            $arg += $SetupSyncthing
+        }
+        if ($SetupBackupTask) {
+            $arg += '-SetupBackupTask'
+            $arg += $SetupBackupTask
         }
 
         # Remove any potential nulls (safe argument list)
@@ -82,6 +97,28 @@ function Read-LoggedHost {
     }
 
     return Read-Host $Prompt
+}
+
+function Get-SetupPreferenceValue {
+    param(
+        [string]$CurrentValue,
+        [string]$Prompt
+    )
+
+    if ($CurrentValue) {
+        if ($CurrentValue -match '^(?i:true|1|yes|y)$') {
+            return 'true'
+        }
+
+        return 'false'
+    }
+
+    $response = Read-LoggedHost $Prompt
+    if ($response -match '^(?i:y|yes)$') {
+        return 'true'
+    }
+
+    return 'false'
 }
 
 function ConvertTo-NativeArgumentString {
@@ -190,7 +227,10 @@ function Install-WSLPlatform {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$RebootTaskName,
-        [string]$ScriptPath
+        [string]$ScriptPath,
+        [string]$InstallOptionalWingetApps,
+        [string]$SetupSyncthing,
+        [string]$SetupBackupTask
     )
 
     $isInstalled = $true
@@ -206,7 +246,7 @@ function Install-WSLPlatform {
             Write-Info 'WSL platform is not installed; installing now (platform only)...'
             $null = Invoke-CommandLogged -Description 'WSL platform installation' -FilePath 'wsl' -ArgumentList @('--install', '--no-distribution')
                 
-            Register-RebootTask -TaskName $RebootTaskName -ScriptPath $ScriptPath
+            Register-RebootTask -TaskName $RebootTaskName -ScriptPath $ScriptPath -InstallOptionalWingetApps $InstallOptionalWingetApps -SetupSyncthing $SetupSyncthing -SetupBackupTask $SetupBackupTask
             Write-Info 'Rebooting to continue setup...'
             Restart-Computer
         }
@@ -263,8 +303,14 @@ function Invoke-WSLSyncthingDecryption {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$DistroName,
-        [string]$DotfilesFolder
+        [string]$DotfilesFolder,
+        [string]$Enabled = 'true'
     )
+
+    if ($Enabled -ne 'true') {
+        Write-Info 'Skipping Syncthing key decryption.'
+        return
+    }
 
     if ($PSCmdlet.ShouldProcess($DistroName, 'Decrypt Syncthing key inside WSL')) {
         Write-Info 'Decrypting Syncthing key...'
@@ -292,7 +338,10 @@ function Register-RebootTask {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$TaskName,
-        [string]$ScriptPath
+        [string]$ScriptPath,
+        [string]$InstallOptionalWingetApps,
+        [string]$SetupSyncthing,
+        [string]$SetupBackupTask
     )
 
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -303,7 +352,16 @@ function Register-RebootTask {
     }
 
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register reboot scheduled task')) {
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ResumeLogPath `"$Script:LogFileActive`""
+        $taskArgs = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', "`"$ScriptPath`"",
+            '-ResumeLogPath', "`"$Script:LogFileActive`"",
+            '-InstallOptionalWingetApps', $InstallOptionalWingetApps,
+            '-SetupSyncthing', $SetupSyncthing,
+            '-SetupBackupTask', $SetupBackupTask
+        )
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ($taskArgs -join ' ')
         $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -RunLevel 'Highest'
 
@@ -404,6 +462,11 @@ function Register-SetupScheduledTasks {
     Write-Info "Creating scheduled tasks..."
 
     foreach ($task in $ScheduledTaskCommands) {
+        if ($task.Enabled -ne 'true') {
+            Write-Info "Skipping scheduled task: $($task.Name)"
+            continue
+        }
+
         if (Get-ScheduledTask -TaskName $task.Name -ErrorAction SilentlyContinue) {
             Write-Info "Scheduled task already exists: $($task.Name)"
             continue
@@ -438,7 +501,9 @@ function Test-AppInstalled {
 
 function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
-    param()
+    param(
+        [string]$InstallOptionalApps
+    )
 
     $primary = @(
         '7zip.7zip',
@@ -535,8 +600,7 @@ function Install-WingetApps {
         Write-Success "Installed primary winget apps..."
     }
 
-    $response = Read-LoggedHost "Do you want to install optional winget apps (gaming and additional tools)? (y/n)"
-    if ($response -match '^y|yes$') {
+    if ($InstallOptionalApps -eq 'true') {
         if ($PSCmdlet.ShouldProcess('Optional Winget Apps', 'Install')) {
             Write-Info 'Installing optional winget apps...'
             foreach ($package in $additional) {
@@ -693,26 +757,30 @@ $NonWingetApps = @(
     }
 )
 
-$ScheduledTaskCommands = @(
-    @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
-    @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
-    @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\backup\backup.vbs'; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest' }
-)
-
 # Program flow
 Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
     Write-Info "Version: 1.5.6"
-    Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath
+    $Script:InstallOptionalWingetApps = Get-SetupPreferenceValue -CurrentValue $InstallOptionalWingetApps -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
+    $Script:SetupSyncthing = Get-SetupPreferenceValue -CurrentValue $SetupSyncthing -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
+    $Script:SetupBackupTask = Get-SetupPreferenceValue -CurrentValue $SetupBackupTask -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
+
+    $ScheduledTaskCommands = @(
+        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = 'true' },
+        @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = $Script:SetupSyncthing },
+        @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\backup\backup.vbs'; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest'; Enabled = $Script:SetupBackupTask }
+    )
+
+    Install-WSLPlatform -RebootTaskName $RebootTaskName -ScriptPath $PSCommandPath -InstallOptionalWingetApps $Script:InstallOptionalWingetApps -SetupSyncthing $Script:SetupSyncthing -SetupBackupTask $Script:SetupBackupTask
     $null = Install-WSLDistroIfMissing -DistroName $WslDistroName
 
-    Install-WingetApps
+    Install-WingetApps -InstallOptionalApps $Script:InstallOptionalWingetApps
     # Install-NonWingetApps -NonWingetApps $NonWingetApps
 
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogFileActive $LogFileActive -ScriptRoot $PSScriptRoot
-    Invoke-WSLSyncthingDecryption -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder
+    Invoke-WSLSyncthingDecryption -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -Enabled $Script:SetupSyncthing
 
     Write-Info 'Creating symbolic links...'
     New-Symlink -Src "$env:USERPROFILE\.dotfiles\wezterm\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
