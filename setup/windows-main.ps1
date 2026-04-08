@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$ResumeLogPath,
-    [string]$InstallOptionalWingetApps,
-    [string]$SetupSyncthing,
-    [string]$SetupBackupTask
+    [Nullable[bool]]$InstallOptionalWingetApps,
+    [Nullable[bool]]$SetupSyncthing,
+    [Nullable[bool]]$SetupBackupTask
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,15 +22,15 @@ function Invoke-RunAsAdmin {
             $arg += '-ResumeLogPath'
             $arg += $ResumeLogPath
         }
-        if ($InstallOptionalWingetApps) {
+        if ($null -ne $InstallOptionalWingetApps) {
             $arg += '-InstallOptionalWingetApps'
             $arg += $InstallOptionalWingetApps
         }
-        if ($SetupSyncthing) {
+        if ($null -ne $SetupSyncthing) {
             $arg += '-SetupSyncthing'
             $arg += $SetupSyncthing
         }
-        if ($SetupBackupTask) {
+        if ($null -ne $SetupBackupTask) {
             $arg += '-SetupBackupTask'
             $arg += $SetupBackupTask
         }
@@ -101,86 +101,148 @@ function Read-LoggedHost {
 
 function Get-SetupPreferenceValue {
     param(
-        [string]$CurrentValue,
+        [Nullable[bool]]$CurrentValue,
         [string]$Prompt
     )
 
-    if ($CurrentValue) {
-        if ($CurrentValue -match '^(?i:true|1|yes|y)$') {
-            return 'true'
-        }
-
-        return 'false'
+    if ($null -ne $CurrentValue) {
+        return [bool]$CurrentValue
     }
 
     $response = Read-LoggedHost $Prompt
-    if ($response -match '^(?i:y|yes)$') {
+    return ($response -match '^(?i:y|yes)$')
+}
+
+function ConvertTo-BooleanString {
+    param([bool]$Value)
+
+    if ($Value) {
         return 'true'
     }
 
     return 'false'
 }
 
-function ConvertTo-NativeArgumentString {
-    param([string[]]$ArgumentList)
+function Write-ProcessOutput {
+    param(
+        [string[]]$Lines,
+        [switch]$Silent
+    )
 
-    if (-not $ArgumentList -or $ArgumentList.Count -eq 0) {
-        return ''
+    if (-not $Lines) {
+        return
     }
 
-    $quotedArgs = foreach ($argument in $ArgumentList) {
-        if ($null -eq $argument) {
-            '""'
+    foreach ($line in $Lines) {
+        $text = $line -replace "`0", ''
+        if ([string]::IsNullOrWhiteSpace($text)) {
             continue
         }
 
-        if ($argument -notmatch '[\s"]') {
-            $argument
-            continue
+        Add-Content -Path $Script:LogFileActive -Value $text -Encoding utf8
+        if (-not $Silent) {
+            Write-Host $text
         }
-
-        $escaped = $argument -replace '(\\*)"', '$1$1\"'
-        $escaped = $escaped -replace '(\\+)$', '$1$1'
-        '"' + $escaped + '"'
     }
-
-    return ($quotedArgs -join ' ')
 }
 
-function Invoke-CommandLogged {
+function Invoke-NativeProcess {
     param(
         [string]$Description,
         [string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [switch]$AllowFailure
+        [switch]$AllowFailure,
+        [switch]$Silent
     )
 
     if (-not $FilePath) {
-        throw 'Invoke-CommandLogged requires a file path to execute.'
+        throw 'Invoke-NativeProcess requires a file path to execute.'
     }
 
-    $utf8Encoding = New-Object System.Text.UTF8Encoding($false)
-    $logWriter = New-Object System.IO.StreamWriter($Script:LogFileActive, $true, $utf8Encoding)
+    $tempDir = Join-Path $env:TEMP ("dotfiles-native-{0}" -f ([guid]::NewGuid()))
+    $stdoutPath = Join-Path $tempDir 'stdout.log'
+    $stderrPath = Join-Path $tempDir 'stderr.log'
+    $stdoutLines = @()
+    $stderrLines = @()
+    $exitCode = 0
 
     try {
-        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
-            $logText = $_.ToString() -replace "`0", ''
-            $logWriter.WriteLine($logText)
-            $logWriter.Flush()
-            $_
-        } | Out-Host
+        $null = New-Item -ItemType Directory -Path $tempDir -Force
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $exitCode = $process.ExitCode
 
-        $exitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $stdoutPath) {
+            $stdoutLines = @(Get-Content -LiteralPath $stdoutPath)
+        }
+        if (Test-Path -LiteralPath $stderrPath) {
+            $stderrLines = @(Get-Content -LiteralPath $stderrPath)
+        }
+
+        Write-ProcessOutput -Lines $stdoutLines -Silent:$Silent
+        Write-ProcessOutput -Lines $stderrLines -Silent:$Silent
     }
     finally {
-        $logWriter.Dispose()
+        if (Test-Path -LiteralPath $tempDir) {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     if (-not $AllowFailure -and $exitCode -ne 0) {
+        $combinedOutput = @($stdoutLines + $stderrLines) -join [Environment]::NewLine
+        if ($combinedOutput) {
+            throw "$Description failed with exit code $exitCode. Output: $combinedOutput"
+        }
+
         throw "$Description failed with exit code $exitCode"
     }
 
-    return $exitCode
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        StdOut   = $stdoutLines
+        StdErr   = $stderrLines
+    }
+}
+
+function Get-CombinedProcessOutput {
+    param([object]$Result)
+
+    return @($Result.StdOut + $Result.StdErr)
+}
+
+function Test-IsExpectedWingetMiss {
+    param([object]$Result)
+
+    if (-not $Result -or $Result.ExitCode -eq 0) {
+        return $false
+    }
+
+    $combinedOutput = (Get-CombinedProcessOutput -Result $Result) -join "`n"
+    return $combinedOutput -match 'No (installed )?package found matching input criteria'
+}
+
+function Get-WslUnixPath {
+    param(
+        [string]$DistroName,
+        [string]$WindowsPath
+    )
+
+    $result = Invoke-NativeProcess -Description "WSL path conversion for $WindowsPath" -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'wslpath', '-u', $WindowsPath) -Silent
+    $wslPath = (@($result.StdOut) -join "`n").Trim()
+    if (-not $wslPath) {
+        throw "Failed to convert Windows path to WSL path: $WindowsPath"
+    }
+
+    return $wslPath
+}
+
+function Escape-BashSingleQuotedString {
+    param([string]$Value)
+
+    return $Value.Replace("'", "'\''")
+}
+
+function Test-IsInteractiveSession {
+    return (-not $ResumeLogPath) -and [Environment]::UserInteractive -and ($Host.Name -eq 'ConsoleHost')
 }
 
 function Invoke-WithRetries {
@@ -228,23 +290,23 @@ function Install-WSLPlatform {
     param(
         [string]$RebootTaskName,
         [string]$ScriptPath,
-        [string]$InstallOptionalWingetApps,
-        [string]$SetupSyncthing,
-        [string]$SetupBackupTask
+        [bool]$InstallOptionalWingetApps,
+        [bool]$SetupSyncthing,
+        [bool]$SetupBackupTask
     )
 
-    $isInstalled = $true
-    try {
-        $null = wsl --status 2>&1
-    }
-    catch {
+    if (-not (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue)) {
         $isInstalled = $false
+    }
+    else {
+        $statusResult = Invoke-NativeProcess -Description 'WSL status check' -FilePath 'wsl.exe' -ArgumentList @('--status') -AllowFailure -Silent
+        $isInstalled = ($statusResult.ExitCode -eq 0)
     }
 
     if (-not $isInstalled) {
         if ($PSCmdlet.ShouldProcess('WSL', 'Install platform')) {
             Write-Info 'WSL platform is not installed; installing now (platform only)...'
-            $null = Invoke-CommandLogged -Description 'WSL platform installation' -FilePath 'wsl' -ArgumentList @('--install', '--no-distribution')
+            $null = Invoke-NativeProcess -Description 'WSL platform installation' -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution')
                 
             Register-RebootTask -TaskName $RebootTaskName -ScriptPath $ScriptPath -InstallOptionalWingetApps $InstallOptionalWingetApps -SetupSyncthing $SetupSyncthing -SetupBackupTask $SetupBackupTask
             Write-Info 'Rebooting to continue setup...'
@@ -258,15 +320,15 @@ function Install-WSLDistroIfMissing {
     param([string]$DistroName)
 
     $installed = $false
-    $listOutput = wsl --list --quiet 2>&1
-    if ($listOutput | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ieq $DistroName }) {
+    $listResult = Invoke-NativeProcess -Description 'WSL distro list' -FilePath 'wsl.exe' -ArgumentList @('--list', '--quiet') -AllowFailure -Silent
+    if ($listResult.ExitCode -eq 0 -and ($listResult.StdOut | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ieq $DistroName })) {
         $installed = $true
     }
 
     if (-not $installed) {
         if ($PSCmdlet.ShouldProcess($DistroName, 'Install WSL distro')) {
             Write-Info "Installing WSL distro: $DistroName"
-            $null = Invoke-CommandLogged -Description "WSL distro installation ($DistroName)" -FilePath 'wsl' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
+            $null = Invoke-NativeProcess -Description "WSL distro installation ($DistroName)" -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
             return $true
         }
     }
@@ -286,15 +348,15 @@ function Invoke-WSLDotfilesSetup {
 
     if ($PSCmdlet.ShouldProcess($DistroName, 'Run dotfiles setup inside WSL')) {
         Write-Info 'Running dotfiles setup inside WSL...'
-        $wslScriptDir = (wsl -d $DistroName -e wslpath -u $ScriptRoot).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not $wslScriptDir) { throw "Failed to convert ScriptRoot ($ScriptRoot) to WSL path (Exit Code: $LASTEXITCODE)" }
+        $wslScriptDir = Get-WslUnixPath -DistroName $DistroName -WindowsPath $ScriptRoot
+        $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
+        $wslLogFile = Get-WslUnixPath -DistroName $DistroName -WindowsPath $LogFileActive
 
-        $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
-        $wslLogFile = (wsl -d $DistroName -e wslpath -u $LogFileActive).Trim()
-
-        $bashCmd = "DOTFILES_FOLDER='$wslDotfilesFolder' DOTFILES_LOG_FILE='$wslLogFile' bash '$wslScriptDir/arch-wsl-main.sh'"
-        wsl -d $DistroName -e bash -c $bashCmd
-        if ($LASTEXITCODE -ne 0) { throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE" }
+        $escapedDotfilesFolder = Escape-BashSingleQuotedString -Value $wslDotfilesFolder
+        $escapedLogFile = Escape-BashSingleQuotedString -Value $wslLogFile
+        $escapedScriptDir = Escape-BashSingleQuotedString -Value $wslScriptDir
+        $bashCmd = "DOTFILES_FOLDER='$escapedDotfilesFolder' DOTFILES_LOG_FILE='$escapedLogFile' bash '$escapedScriptDir/arch-wsl-main.sh'"
+        $null = Invoke-NativeProcess -Description 'Dotfiles setup inside WSL' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-lc', $bashCmd)
         Write-Success 'Dotfiles setup completed inside WSL.'
     }
 }
@@ -304,21 +366,22 @@ function Invoke-WSLSyncthingDecryption {
     param(
         [string]$DistroName,
         [string]$DotfilesFolder,
-        [string]$Enabled = 'true'
+        [bool]$Enabled = $true
     )
 
-    if ($Enabled -ne 'true') {
+    if (-not $Enabled) {
         Write-Info 'Skipping Syncthing key decryption.'
         return
     }
 
     if ($PSCmdlet.ShouldProcess($DistroName, 'Decrypt Syncthing key inside WSL')) {
         Write-Info 'Decrypting Syncthing key...'
-        $wslDotfilesFolder = (wsl -d $DistroName -e wslpath -u $DotfilesFolder).Trim()
+        $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $decryptAction = {
-            $bashCmd = "cd '$wslDotfilesFolder/syncthing' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem'  >/dev/null 2>&1"
-            wsl -d $DistroName -e bash -c $bashCmd
-            if ($LASTEXITCODE -ne 0) {
+            $escapedSyncthingDir = Escape-BashSingleQuotedString -Value "$wslDotfilesFolder/syncthing"
+            $bashCmd = "cd '$escapedSyncthingDir' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem' >/dev/null 2>&1"
+            $result = Invoke-NativeProcess -Description 'Syncthing key decryption command' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', $bashCmd) -AllowFailure -Silent
+            if ($result.ExitCode -ne 0) {
                 return $false
             }
 
@@ -326,7 +389,8 @@ function Invoke-WSLSyncthingDecryption {
         }
         $cleanupAction = {
             param($Attempt, $MaxAttempts, $LastError)
-            wsl -d $DistroName -e bash -c "rm -f '$wslDotfilesFolder/syncthing/key.pem'"
+            $escapedKeyPath = Escape-BashSingleQuotedString -Value "$wslDotfilesFolder/syncthing/key.pem"
+            $null = Invoke-NativeProcess -Description 'Syncthing key cleanup' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', "rm -f '$escapedKeyPath'") -AllowFailure -Silent
         }
 
         Invoke-WithRetries -Description 'Syncthing key decryption' -MaxAttempts 3 -Action $decryptAction -OnRetry $cleanupAction
@@ -339,9 +403,9 @@ function Register-RebootTask {
     param(
         [string]$TaskName,
         [string]$ScriptPath,
-        [string]$InstallOptionalWingetApps,
-        [string]$SetupSyncthing,
-        [string]$SetupBackupTask
+        [bool]$InstallOptionalWingetApps,
+        [bool]$SetupSyncthing,
+        [bool]$SetupBackupTask
     )
 
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -352,14 +416,17 @@ function Register-RebootTask {
     }
 
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register reboot scheduled task')) {
+        $installOptionalWingetAppsArg = ConvertTo-BooleanString -Value $InstallOptionalWingetApps
+        $setupSyncthingArg = ConvertTo-BooleanString -Value $SetupSyncthing
+        $setupBackupTaskArg = ConvertTo-BooleanString -Value $SetupBackupTask
         $taskArgs = @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-File', "`"$ScriptPath`"",
             '-ResumeLogPath', "`"$Script:LogFileActive`"",
-            '-InstallOptionalWingetApps', $InstallOptionalWingetApps,
-            '-SetupSyncthing', $SetupSyncthing,
-            '-SetupBackupTask', $SetupBackupTask
+            '-InstallOptionalWingetApps', $installOptionalWingetAppsArg,
+            '-SetupSyncthing', $setupSyncthingArg,
+            '-SetupBackupTask', $setupBackupTaskArg
         )
         $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ($taskArgs -join ' ')
         $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
@@ -462,17 +529,29 @@ function Register-SetupScheduledTasks {
     Write-Info "Creating scheduled tasks..."
 
     foreach ($task in $ScheduledTaskCommands) {
-        if ($task.Enabled -ne 'true') {
+        if (-not $task.Enabled) {
+            if (Get-ScheduledTask -TaskName $task.Name -ErrorAction SilentlyContinue) {
+                if ($PSCmdlet.ShouldProcess($task.Name, 'Remove disabled scheduled task')) {
+                    Unregister-ScheduledTask -TaskName $task.Name -Confirm:$false
+                    Write-Info "Removed disabled scheduled task: $($task.Name)"
+                }
+            }
+
             Write-Info "Skipping scheduled task: $($task.Name)"
             continue
         }
 
+        $canRegister = $true
         if (Get-ScheduledTask -TaskName $task.Name -ErrorAction SilentlyContinue) {
-            Write-Info "Scheduled task already exists: $($task.Name)"
-            continue
+            if ($PSCmdlet.ShouldProcess($task.Name, 'Replace scheduled task')) {
+                Unregister-ScheduledTask -TaskName $task.Name -Confirm:$false
+            }
+            else {
+                $canRegister = $false
+            }
         }
 
-        if (-not $PSCmdlet.ShouldProcess($task.Name, 'Register scheduled task')) {
+        if (-not $canRegister -or -not $PSCmdlet.ShouldProcess($task.Name, 'Register scheduled task')) {
             continue
         }
 
@@ -502,7 +581,7 @@ function Test-AppInstalled {
 function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
-        [string]$InstallOptionalApps
+        [bool]$InstallOptionalApps
     )
 
     $primary = @(
@@ -565,26 +644,28 @@ function Install-WingetApps {
         'MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe'
     )
 
-    $primary = @(
-        '7zip.7zip'
-    )
-    $additional = @(
-        'voidtools.Everything.Alpha'
-    )
-
     Write-Info "Remove garbage ..."
     foreach ($package in $preinstalledPackagesToRemove) {
         Write-Info "Removing package: $package"
-    }
-    $null = winget remove --all --exact --silent --nowarn --purge --force --disable-interactivity --accept-source-agreements --source winget $preinstalledPackagesToRemove > $null 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "winget remove preinstalled apps failed with exit code $LASTEXITCODE"
+        $removeResult = Invoke-NativeProcess -Description "winget remove ($package)" -FilePath 'winget.exe' -ArgumentList @('remove', '--all', '--exact', '--silent', '--nowarn', '--purge', '--force', '--disable-interactivity', '--accept-source-agreements', '--source', 'winget', $package) -AllowFailure -Silent
+        if (Test-IsExpectedWingetMiss -Result $removeResult) {
+            Write-Info "Package not present, skipping removal: $package"
+            continue
+        }
+        if ($removeResult.ExitCode -ne 0) {
+            throw "winget remove preinstalled app failed for $package with exit code $($removeResult.ExitCode)"
+        }
     }
     Write-Success "Garbage removed..."
 
     Write-Info 'Installing updates...'
-    #winget update --all --silent --disable-interactivity --accept-package-agreements --accept-source-agreements
-    Write-Success "Updates installed..."
+    $updateResult = Invoke-NativeProcess -Description 'winget update' -FilePath 'winget.exe' -ArgumentList @('update', '--all', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements') -AllowFailure -Silent
+    if ($updateResult.ExitCode -eq 0) {
+        Write-Success "Updates installed..."
+    }
+    else {
+        Write-WarningLog "winget update exited with code $($updateResult.ExitCode). Continuing setup."
+    }
 
     Write-Info 'Installing winget applications...'
 
@@ -592,24 +673,18 @@ function Install-WingetApps {
         Write-Info 'Installing primary winget apps...'
         foreach ($package in $primary) {
             Write-Info "Installing primary package: $package"
+            $null = Invoke-NativeProcess -Description "winget install ($package)" -FilePath 'winget.exe' -ArgumentList @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package) -Silent
         }
-        #$null = winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $primary > $null 2>&1
-        #if ($LASTEXITCODE -ne 0) {
-        #    throw "winget install primary apps failed with exit code $LASTEXITCODE"
-        #}
         Write-Success "Installed primary winget apps..."
     }
 
-    if ($InstallOptionalApps -eq 'true') {
+    if ($InstallOptionalApps) {
         if ($PSCmdlet.ShouldProcess('Optional Winget Apps', 'Install')) {
             Write-Info 'Installing optional winget apps...'
             foreach ($package in $additional) {
                 Write-Info "Installing optional package: $package"
+                $null = Invoke-NativeProcess -Description "winget install ($package)" -FilePath 'winget.exe' -ArgumentList @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package) -Silent
             }
-            #$null = winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements $additional > $null 2>&1
-            #if ($LASTEXITCODE -ne 0) {
-            #    throw "winget install optional apps failed with exit code $LASTEXITCODE"
-            #}
             Write-Success "Installed optional winget apps..."
         }
     }
@@ -660,14 +735,12 @@ function Install-NonWingetApps {
                     Write-Info "Downloading installer to: $installerPath"
                     Invoke-WebRequest -Uri $app.Uri -OutFile $installerPath -UseBasicParsing
 
-                    $installerArgs = if ($app.InstallerArgs) { $app.InstallerArgs } else { $null }
                     Write-Info "Running installer..."
-                    if ($installerArgs) {
-                        Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -NoNewWindow
+                    $installerArgs = @()
+                    if ($app.InstallerArgs) {
+                        $installerArgs = @($app.InstallerArgs)
                     }
-                    else {
-                        Start-Process -FilePath $installerPath -Wait -NoNewWindow
-                    }
+                    $null = Invoke-NativeProcess -Description "Installer for $($app.Name)" -FilePath $installerPath -ArgumentList $installerArgs
                 }
                 'ZipInstall' {
                     $zipName = if ($app.ZipName) { $app.ZipName } else { [IO.Path]::GetFileNameWithoutExtension($app.Uri) }
@@ -690,14 +763,12 @@ function Install-NonWingetApps {
 
                     if (-not $installerPath) { throw "No installer found in $extractDir" }
 
-                    $installerArgs = if ($app.InstallerArgs) { $app.InstallerArgs } else { $null }
                     Write-Info "Running installer from zip: $installerPath"
-                    if ($installerArgs) {
-                        Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -NoNewWindow
+                    $installerArgs = @()
+                    if ($app.InstallerArgs) {
+                        $installerArgs = @($app.InstallerArgs)
                     }
-                    else {
-                        Start-Process -FilePath $installerPath -Wait -NoNewWindow
-                    }
+                    $null = Invoke-NativeProcess -Description "Installer for $($app.Name)" -FilePath $installerPath -ArgumentList $installerArgs
                 }
                 'RemoteScript' {
                     Write-Info "Executing remote script from $($app.Uri)"
@@ -705,7 +776,7 @@ function Install-NonWingetApps {
                     $remoteScriptPath = Join-Path $tempDir "$($app.Name)-remote.ps1"
                     Invoke-WebRequest -Uri $app.Uri -OutFile $remoteScriptPath -UseBasicParsing
 
-                    $null = Invoke-CommandLogged -Description "Remote script install for $($app.Name)" -FilePath 'powershell' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $remoteScriptPath)
+                    $null = Invoke-NativeProcess -Description "Remote script install for $($app.Name)" -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $remoteScriptPath)
                 }
                 default {
                     throw "Unknown non-winget app type: $($app.Type)"
@@ -768,7 +839,7 @@ try {
     $Script:SetupBackupTask = Get-SetupPreferenceValue -CurrentValue $SetupBackupTask -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
 
     $ScheduledTaskCommands = @(
-        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = 'true' },
+        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\wezterm\wezterm.vbs'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = $true },
         @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest'; Enabled = $Script:SetupSyncthing },
         @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument '%USERPROFILE%\.dotfiles\backup\backup.vbs'; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest'; Enabled = $Script:SetupBackupTask }
     )
@@ -777,7 +848,7 @@ try {
     $null = Install-WSLDistroIfMissing -DistroName $WslDistroName
 
     Install-WingetApps -InstallOptionalApps $Script:InstallOptionalWingetApps
-    # Install-NonWingetApps -NonWingetApps $NonWingetApps
+    Install-NonWingetApps -NonWingetApps $NonWingetApps
 
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogFileActive $LogFileActive -ScriptRoot $PSScriptRoot
     Invoke-WSLSyncthingDecryption -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -Enabled $Script:SetupSyncthing
@@ -798,5 +869,7 @@ catch {
 }
 finally {
     Unregister-RebootTask -TaskName $RebootTaskName
-    $null = Read-LoggedHost 'Press Enter to close'
+    if (Test-IsInteractiveSession) {
+        $null = Read-LoggedHost 'Press Enter to close'
+    }
 }

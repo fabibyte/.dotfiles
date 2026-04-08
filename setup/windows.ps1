@@ -32,6 +32,5 @@ else {
 }
 
 $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $setupScript)
-
 & powershell @arg
 exit $LASTEXITCODE

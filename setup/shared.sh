@@ -6,232 +6,236 @@ DOTFILES_FOLDER="${DOTFILES_FOLDER:-$HOME/.dotfiles}"
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-$DOTFILES_FOLDER/setup_$(date +%Y%m%d_%H%M%S).log}"
 
 init_logging() {
-	local log_dir
-	log_dir="$(dirname "$DOTFILES_LOG_FILE")"
-	if [ ! -d "$log_dir" ]; then
-		mkdir -p "$log_dir" 2>/dev/null
-	fi
+    local log_dir
+    log_dir="$(dirname "$DOTFILES_LOG_FILE")"
+    if [ ! -d "$log_dir" ]; then
+        mkdir -p "$log_dir" 2>/dev/null
+    fi
 
-	if [ ! -e "$DOTFILES_LOG_FILE" ]; then
-		touch "$DOTFILES_LOG_FILE" 2>/dev/null
-	fi
+    if [ ! -e "$DOTFILES_LOG_FILE" ]; then
+        touch "$DOTFILES_LOG_FILE" 2>/dev/null
+    fi
 
-	exec > >(tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' >>"$DOTFILES_LOG_FILE")) 2>&1
+    exec > >(tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' >>"$DOTFILES_LOG_FILE")) 2>&1
 }
 
 write_log() {
-	local level="$1"
-	shift
-	local message="$*"
-	local timestamp
-	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-	local formatted="[$level] $message"
-	local color=""
-	local reset="\033[0m"
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local formatted="[$level] $message"
+    local color=""
+    local reset="\033[0m"
 
-	case "$level" in
-	INFO) color="\033[0;36m" ;;
-	SUCCESS) color="\033[0;32m" ;;
-	WARNING) color="\033[1;33m" ;;
-	ERROR) color="\033[0;31m" ;;
-	*) reset="" ;;
-	esac
+    case "$level" in
+    INFO) color="\033[0;36m" ;;
+    SUCCESS) color="\033[0;32m" ;;
+    WARNING) color="\033[1;33m" ;;
+    ERROR) color="\033[0;31m" ;;
+    *) reset="" ;;
+    esac
 
-	printf "%b[%s] %s%b\n" "$color" "$timestamp" "$formatted" "$reset"
+    printf "%b[%s] %s%b\n" "$color" "$timestamp" "$formatted" "$reset"
 }
 
 info() {
-	write_log "INFO" "$*"
+    write_log "INFO" "$*"
 }
 
 success() {
-	write_log "SUCCESS" "$*"
+    write_log "SUCCESS" "$*"
 }
 
 warning() {
-	write_log "WARNING" "$*"
+    write_log "WARNING" "$*"
 }
 
 error() {
-	write_log "ERROR" "$*" >&2
+    write_log "ERROR" "$*" >&2
 }
 
 abort() {
-	local code=1
-	if [[ "$1" =~ ^[0-9]+$ ]]; then
-		code="$1"
-		shift
-	fi
-	error "$*"
-	exit "$code"
+    local code=1
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        code="$1"
+        shift
+    fi
+    error "$*"
+    exit "$code"
 }
 
 assert_running_in_wsl() {
-	if ! grep -qi "microsoft" /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME-}" ]; then
-		abort "This script is intended to run inside WSL."
-	fi
+    if ! grep -qi "microsoft" /proc/version 2>/dev/null && [ -z "${WSL_DISTRO_NAME-}" ]; then
+        abort "This script is intended to run inside WSL."
+    fi
 }
 
 ensure_dotfiles_cloned() {
-	if [ -d "$DOTFILES_FOLDER/.git" ]; then
-		info "Dotfiles already cloned at $DOTFILES_FOLDER."
-		return
-	fi
+    if [ -d "$DOTFILES_FOLDER/.git" ]; then
+        info "Dotfiles already cloned at $DOTFILES_FOLDER."
+        return
+    fi
 
-	info "Cloning dotfiles into $DOTFILES_FOLDER..."
-	mkdir -p "$DOTFILES_FOLDER"
-	cd "$DOTFILES_FOLDER"
+    info "Cloning dotfiles into $DOTFILES_FOLDER..."
+    mkdir -p "$DOTFILES_FOLDER"
 
-	{
-		git init &&
-			git remote add origin "https://github.com/fabibyte/.dotfiles.git" &&
-			git fetch origin &&
-			git reset --hard origin/main &&
-			git branch -M main &&
-			git branch --set-upstream-to=origin/main main
-	} &>/dev/null || abort "Failed to clone dotfiles."
+    {
+        git -C "$DOTFILES_FOLDER" init &&
+            git -C "$DOTFILES_FOLDER" remote add origin "https://github.com/fabibyte/.dotfiles.git" &&
+            git -C "$DOTFILES_FOLDER" fetch origin main &&
+            git -C "$DOTFILES_FOLDER" checkout -B main --track origin/main
+    } &>/dev/null || abort "Failed to clone dotfiles."
 
-	success "Dotfiles cloned."
+    success "Dotfiles cloned."
 }
 
 create_symlink() {
-	local src="$1"
-	local tgt="$2"
+    local src="$1"
+    local tgt="$2"
 
-	if [ -z "$src" ] || [ -z "$tgt" ]; then
-		error "create_symlink requires <src> and <target> arguments"
-		return 1
-	fi
+    if [ -z "$src" ] || [ -z "$tgt" ]; then
+        error "create_symlink requires <src> and <target> arguments"
+        return 1
+    fi
 
-	if [ ! -e "$src" ]; then
-		warning "Source does not exist: $src"
-		return
-	fi
+    if [ ! -e "$src" ]; then
+        warning "Source does not exist: $src"
+        return
+    fi
 
-	if [ -L "$tgt" ]; then
-		local current
-		current=$(readlink -f "$tgt")
-		if [ "$current" = "$src" ]; then
-			info "Symlink already correct: $tgt -> $src"
-			return
-		fi
+    if [ -L "$tgt" ]; then
+        local current
+        current=$(readlink -f "$tgt")
+        if [ "$current" = "$src" ]; then
+            info "Symlink already correct: $tgt -> $src"
+            return
+        fi
 
-		rm -f "$tgt"
-	fi
+        rm -f "$tgt"
+    fi
 
-	if [ -e "$tgt" ]; then
-		warning "Target exists and is not a symlink; skipping: $tgt"
-		return
-	fi
+    if [ -e "$tgt" ]; then
+        warning "Target exists and is not a symlink; skipping: $tgt"
+        return
+    fi
 
-	mkdir -p "$(dirname "$tgt")"
-	ln -s "$src" "$tgt"
-	success "Linked $tgt -> $src"
+    mkdir -p "$(dirname "$tgt")"
+    ln -s "$src" "$tgt"
+    success "Linked $tgt -> $src"
 }
 
 link_tree() {
-	local src_dir="$1"
-	local tgt_dir="$2"
+    local src_dir="$1"
+    local tgt_dir="$2"
 
-	if [ ! -d "$src_dir" ]; then
-		warning "Source directory does not exist: $src_dir"
-		return
-	fi
+    if [ ! -d "$src_dir" ]; then
+        warning "Source directory does not exist: $src_dir"
+        return
+    fi
 
-	find "$src_dir" -type f -print0 | while IFS= read -r -d '' file; do
-		local rel_path
-		rel_path="${file#"$src_dir"/}"
-		local tgt_file="$tgt_dir/$rel_path"
-		create_symlink "$file" "$tgt_file"
-	done
+    find "$src_dir" -type f -print0 | while IFS= read -r -d '' file; do
+        local rel_path
+        rel_path="${file#"$src_dir"/}"
+        local tgt_file="$tgt_dir/$rel_path"
+        create_symlink "$file" "$tgt_file"
+    done
 }
 
 fetch_file() {
-	local url="$1"
-	local target="$2"
+    local url="$1"
+    local target="$2"
 
-	mkdir -p "$(dirname "$target")"
-	if curl -fsSL "$url" -o "$target"; then
-		success "Fetched $url -> $target"
-	else
-		error "Failed to fetch $url"
-		return 1
-	fi
+    if [ -f "$target" ]; then
+        info "File already present, skipping fetch: $target"
+        return
+    fi
+
+    mkdir -p "$(dirname "$target")"
+    if curl -fsSL "$url" -o "$target"; then
+        success "Fetched $url -> $target"
+    else
+        error "Failed to fetch $url"
+        return 1
+    fi
 }
 
 decrypt_ssh_keys() {
-	local encrypted="$DOTFILES_FOLDER/.ssh/id_ed25519.enc"
-	local decrypted="$DOTFILES_FOLDER/.ssh/id_ed25519"
-	local max_attempts=3
-	local attempt
-	local passphrase
+    local encrypted="$DOTFILES_FOLDER/.ssh/id_ed25519.enc"
+    local decrypted="$DOTFILES_FOLDER/.ssh/id_ed25519"
+    local max_attempts=3
+    local attempt
+    local passphrase
 
-	if [ -f "$decrypted" ]; then
-		info "SSH key already decrypted."
-		return
-	fi
+    if [ -f "$decrypted" ]; then
+        info "SSH key already decrypted."
+        return
+    fi
 
-	if [ ! -f "$encrypted" ]; then
-		warning "Encrypted SSH key not found: $encrypted"
-		return
-	fi
+    if [ ! -f "$encrypted" ]; then
+        warning "Encrypted SSH key not found: $encrypted"
+        return
+    fi
 
-	info "Decrypting SSH keys..."
+    info "Decrypting SSH keys..."
 
-	for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-		if [ ! -r /dev/tty ]; then
-			error "SSH key decryption failed after $max_attempts attempts."
-			return 1
-		fi
+    for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+        if [ ! -r /dev/tty ]; then
+            error "SSH key decryption failed after $max_attempts attempts."
+            return 1
+        fi
 
-		read -r -s -p "enter AES-256-CBC decryption password: " passphrase </dev/tty
-		printf '\n' >/dev/tty
+        read -r -s -p "enter AES-256-CBC decryption password: " passphrase </dev/tty
+        printf '\n' >/dev/tty
 
-		if printf '%s' "$passphrase" | openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -pass stdin -in "$encrypted" -out "$decrypted" >/dev/null 2>&1; then
-			chmod 600 "$decrypted"
-			success "SSH key decrypted."
-			link_tree "$DOTFILES_FOLDER/.ssh" "$HOME/.ssh"
-			return
-		fi
+        if printf '%s' "$passphrase" | openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -pass stdin -in "$encrypted" -out "$decrypted" >/dev/null 2>&1; then
+            chmod 600 "$decrypted"
+            success "SSH key decrypted."
+            link_tree "$DOTFILES_FOLDER/.ssh" "$HOME/.ssh"
+            return
+        fi
 
-		rm -f "$decrypted"
+        rm -f "$decrypted"
 
-		if [ "$attempt" -lt "$max_attempts" ]; then
-			warning "SSH key decryption failed. $((max_attempts - attempt)) attempt(s) remaining."
-		else
-			error "SSH key decryption failed after $max_attempts attempts."
-			return 1
-		fi
-	done
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            warning "SSH key decryption failed. $((max_attempts - attempt)) attempt(s) remaining."
+        else
+            error "SSH key decryption failed after $max_attempts attempts."
+            return 1
+        fi
+    done
 }
 
 set_fish_default_shell() {
-	if ! command -v sudo >/dev/null 2>&1; then
-		warning "sudo is not available; cannot set fish as default shell."
-		return
-	fi
+    if ! command -v sudo >/dev/null 2>&1; then
+        warning "sudo is not available; cannot set fish as default shell."
+        return
+    fi
 
-	if ! command -v fish >/dev/null 2>&1; then
-		warning "fish not installed; skipping shell change."
-		return
-	fi
+    if ! command -v fish >/dev/null 2>&1; then
+        warning "fish not installed; skipping shell change."
+        return
+    fi
 
-	local fish_shell
-	fish_shell=$(command -v fish)
+    local fish_shell
+    local current_shell
+    fish_shell=$(command -v fish)
+    current_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
 
-	if ! grep -qx "$fish_shell" /etc/shells; then
-		info "Registering fish shell in /etc/shells..."
-		echo "$fish_shell" | sudo tee -a /etc/shells >/dev/null
-	fi
+    if ! grep -qx "$fish_shell" /etc/shells; then
+        info "Registering fish shell in /etc/shells..."
+        echo "$fish_shell" | sudo tee -a /etc/shells >/dev/null
+    fi
 
-	if [ "$(basename "$SHELL")" = "fish" ]; then
-		info "fish is already the default shell."
-		return
-	fi
+    if [ "$current_shell" = "$fish_shell" ]; then
+        info "fish is already the default shell."
+        return
+    fi
 
-	info "Setting fish as default shell..."
-	sudo chsh -s "$fish_shell" "$(whoami)"
-	success "Default shell set to fish."
+    info "Setting fish as default shell..."
+    sudo chsh -s "$fish_shell" "$(whoami)"
+    success "Default shell set to fish."
 }
 
 install_shared_tooling() {
