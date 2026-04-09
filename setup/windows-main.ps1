@@ -9,11 +9,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $Script:HadSetupError = $false
 $Script:SetupCompleted = $false
-$Script:FlagArgumentsProvided = @{
-    InstallOptionalWingetApps = $PSBoundParameters.ContainsKey('InstallOptionalWingetApps')
-    SetupSyncthing            = $PSBoundParameters.ContainsKey('SetupSyncthing')
-    SetupBackupTask           = $PSBoundParameters.ContainsKey('SetupBackupTask')
-}
 
 function Invoke-RunAsAdmin {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -25,25 +20,23 @@ function Invoke-RunAsAdmin {
         }
 
         $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+
         if ($ResumeLogPath) {
             $arg += '-ResumeLogPath'
             $arg += $ResumeLogPath
         }
-        if ($Script:FlagArgumentsProvided.InstallOptionalWingetApps) {
+        if ($null -ne $Script:InstallOptionalWingetApps) {
             $arg += '-InstallOptionalWingetApps'
-            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$InstallOptionalWingetApps))
+            $arg += $InstallOptionalWingetApps
         }
-        if ($Script:FlagArgumentsProvided.SetupSyncthing) {
+        if ($null -ne $Script:SetupSyncthing) {
             $arg += '-SetupSyncthing'
-            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$SetupSyncthing))
+            $arg += $SetupSyncthing
         }
-        if ($Script:FlagArgumentsProvided.SetupBackupTask) {
+        if ($null -ne $Script:SetupBackupTask) {
             $arg += '-SetupBackupTask'
-            $arg += (ConvertTo-BooleanArgumentString -Value ([bool]$SetupBackupTask))
+            $arg += $SetupBackupTask
         }
-
-        # Remove any potential nulls (safe argument list)
-        $arg = $arg | Where-Object { $_ -ne $null }
 
         Start-Process -FilePath 'powershell.exe' -ArgumentList $arg -Verb RunAs
         exit
@@ -108,7 +101,7 @@ function Read-LoggedHost {
 
 function ConvertTo-NullableBooleanArgument {
     param(
-        [AllowNull()][object]$Value,
+        [object]$Value,
         [string]$ParameterName
     )
 
@@ -134,7 +127,7 @@ function ConvertTo-NullableBooleanArgument {
 
 function Resolve-SetupPreference {
     param(
-        [AllowNull()][Nullable[bool]]$CurrentValue,
+        [Nullable[bool]]$CurrentValue,
         [string]$ParameterName,
         [string]$Prompt
     )
@@ -153,20 +146,9 @@ function Resolve-SetupPreference {
     }
 }
 
-function ConvertTo-BooleanArgumentString {
-    param([bool]$Value)
-
-    if ($Value) {
-        return 'true'
-    }
-
-    return 'false'
-}
-
 function Write-ProcessOutput {
     param(
-        [string[]]$Lines,
-        [switch]$Silent
+        [string[]]$Lines
     )
 
     if (-not $Lines) {
@@ -180,9 +162,7 @@ function Write-ProcessOutput {
         }
 
         Add-Content -Path $Script:LogFileActive -Value $text -Encoding utf8
-        if (-not $Silent) {
-            Write-Host $text
-        }
+        Write-Host $text
     }
 }
 
@@ -192,7 +172,8 @@ function Invoke-NativeProcess {
         [string]$FilePath,
         [string[]]$ArgumentList = @(),
         [switch]$AllowFailure,
-        [switch]$Silent
+        [switch]$Silent,
+        [switch]$CaptureOutputOnly
     )
 
     if (-not $FilePath) {
@@ -230,8 +211,13 @@ function Invoke-NativeProcess {
             $stderrLines = @(Get-Content -LiteralPath $stderrPath)
         }
 
-        Write-ProcessOutput -Lines $stdoutLines -Silent:$Silent
-        Write-ProcessOutput -Lines $stderrLines -Silent:$Silent
+        if (-not $CaptureOutputOnly) {
+            Write-ProcessOutput -Lines $stdoutLines
+        }
+
+        if (-not $Silent -and -not $CaptureOutputOnly) {
+            Write-ProcessOutput -Lines $stderrLines
+        }
     }
     finally {
         if (Test-Path -LiteralPath $tempDir) {
@@ -278,7 +264,7 @@ function Get-WslUnixPath {
         [string]$WindowsPath
     )
 
-    $result = Invoke-NativeProcess -Description "WSL path conversion for $WindowsPath" -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'wslpath', '-u', $WindowsPath) -Silent
+    $result = Invoke-NativeProcess -Description "WSL path conversion for $WindowsPath" -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'wslpath', '-u', $WindowsPath) -CaptureOutputOnly
     $wslPath = (@($result.StdOut) -join "`n").Trim()
     if (-not $wslPath) {
         throw "Failed to convert Windows path to WSL path: $WindowsPath"
@@ -287,7 +273,7 @@ function Get-WslUnixPath {
     return $wslPath
 }
 
-function Escape-BashSingleQuotedString {
+function Format-ToBashSingleQuotedString {
     param([string]$Value)
 
     return $Value.Replace("'", "'\''")
@@ -418,9 +404,9 @@ function Invoke-WSLDotfilesSetup {
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $wslLogFile = Get-WslUnixPath -DistroName $DistroName -WindowsPath $LogFileActive
 
-        $escapedDotfilesFolder = Escape-BashSingleQuotedString -Value $wslDotfilesFolder
-        $escapedLogFile = Escape-BashSingleQuotedString -Value $wslLogFile
-        $escapedScriptDir = Escape-BashSingleQuotedString -Value $wslScriptDir
+        $escapedDotfilesFolder = Format-ToBashSingleQuotedString -Value $wslDotfilesFolder
+        $escapedLogFile = Format-ToBashSingleQuotedString -Value $wslLogFile
+        $escapedScriptDir = Format-ToBashSingleQuotedString -Value $wslScriptDir
         $bashCmd = "DOTFILES_FOLDER='$escapedDotfilesFolder' DOTFILES_LOG_FILE='$escapedLogFile' bash '$escapedScriptDir/arch-wsl-main.sh'"
         $null = Invoke-NativeProcess -Description 'Dotfiles setup inside WSL' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-lc', $bashCmd)
         Write-Success 'Dotfiles setup completed inside WSL.'
@@ -444,7 +430,7 @@ function Invoke-WSLSyncthingDecryption {
         Write-Info 'Decrypting Syncthing key...'
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $decryptAction = {
-            $escapedSyncthingDir = Escape-BashSingleQuotedString -Value "$wslDotfilesFolder/syncthing"
+            $escapedSyncthingDir = Format-ToBashSingleQuotedString -Value "$wslDotfilesFolder/syncthing"
             $bashCmd = "cd '$escapedSyncthingDir' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem' >/dev/null 2>&1"
             $result = Invoke-NativeProcess -Description 'Syncthing key decryption command' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', $bashCmd) -AllowFailure -Silent
             if ($result.ExitCode -ne 0) {
@@ -455,7 +441,7 @@ function Invoke-WSLSyncthingDecryption {
         }
         $cleanupAction = {
             param($Attempt, $MaxAttempts, $LastError)
-            $escapedKeyPath = Escape-BashSingleQuotedString -Value "$wslDotfilesFolder/syncthing/key.pem"
+            $escapedKeyPath = Format-ToBashSingleQuotedString -Value "$wslDotfilesFolder/syncthing/key.pem"
             $null = Invoke-NativeProcess -Description 'Syncthing key cleanup' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', "rm -f '$escapedKeyPath'") -AllowFailure -Silent
         }
 
@@ -482,19 +468,10 @@ function Register-RebootTask {
     }
 
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register reboot scheduled task')) {
-        $installOptionalWingetAppsArg = ConvertTo-BooleanArgumentString -Value $InstallOptionalWingetApps
-        $setupSyncthingArg = ConvertTo-BooleanArgumentString -Value $SetupSyncthing
-        $setupBackupTaskArg = ConvertTo-BooleanArgumentString -Value $SetupBackupTask
-        $taskArgs = @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', "`"$ScriptPath`"",
-            '-ResumeLogPath', "`"$Script:LogFileActive`"",
-            '-InstallOptionalWingetApps', $installOptionalWingetAppsArg,
-            '-SetupSyncthing', $setupSyncthingArg,
-            '-SetupBackupTask', $setupBackupTaskArg
-        )
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ($taskArgs -join ' ')
+        $scriptCmd = "& '$ScriptPath' -ResumeLogPath '$($Script:LogFileActive)' -InstallOptionalWingetApps:`$$InstallOptionalWingetApps -SetupSyncthing:`$$SetupSyncthing -SetupBackupTask:`$$SetupBackupTask"
+        $argString = "-NoProfile -ExecutionPolicy Bypass -Command `"$scriptCmd`""
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
+
         $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -RunLevel 'Highest'
 
@@ -899,7 +876,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.6.4"
+    Write-Info "Version: 1.7.5"
     $Script:InstallOptionalWingetApps = Resolve-SetupPreference -CurrentValue $InstallOptionalWingetApps -ParameterName 'InstallOptionalWingetApps' -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
     $Script:SetupSyncthing = Resolve-SetupPreference -CurrentValue $SetupSyncthing -ParameterName 'SetupSyncthing' -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
     $Script:SetupBackupTask = Resolve-SetupPreference -CurrentValue $SetupBackupTask -ParameterName 'SetupBackupTask' -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
