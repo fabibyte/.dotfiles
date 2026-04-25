@@ -268,8 +268,18 @@ function Get-WslUnixPath {
         [string]$WindowsPath
     )
 
-    $result = Invoke-NativeProcess -Description "WSL path conversion for $WindowsPath" -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'wslpath', '-u', $WindowsPath) -CaptureOutputOnly
-    $wslPath = (@($result.StdOut) -join "`n").Trim()
+    $output = @(& wsl.exe -d $DistroName -e wslpath -u $WindowsPath 2>&1 | ForEach-Object { "$_" })
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $combinedOutput = $output -join [Environment]::NewLine
+        if ($combinedOutput) {
+            throw "WSL path conversion for $WindowsPath failed with exit code $exitCode. Output: $combinedOutput"
+        }
+
+        throw "WSL path conversion for $WindowsPath failed with exit code $exitCode"
+    }
+
+    $wslPath = ($output -join "`n").Trim()
     if (-not $wslPath) {
         throw "Failed to convert Windows path to WSL path: $WindowsPath"
     }
@@ -349,14 +359,22 @@ function Install-WSLPlatform {
         $isInstalled = $false
     }
     else {
-        $statusResult = Invoke-NativeProcess -Description 'WSL status check' -FilePath 'wsl.exe' -ArgumentList @('--status') -AllowFailure -Silent
-        $isInstalled = ($statusResult.ExitCode -eq 0)
+        try {
+            $null = & wsl.exe --status 2>$null
+            $isInstalled = ($LASTEXITCODE -eq 0)
+        }
+        catch {
+            $isInstalled = $false
+        }
     }
 
     if (-not $isInstalled) {
         if ($PSCmdlet.ShouldProcess('WSL', 'Install platform')) {
             Write-Info 'WSL platform is not installed; installing now (platform only)...'
-            $null = Invoke-NativeProcess -Description 'WSL platform installation' -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution')
+            & wsl.exe --install --no-distribution
+            if ($LASTEXITCODE -ne 0) {
+                throw "WSL platform installation failed with exit code $LASTEXITCODE"
+            }
                 
             Register-RebootTask -TaskName $RebootTaskName -ScriptPath $ScriptPath -InstallOptionalWingetApps $InstallOptionalWingetApps -SetupSyncthing $SetupSyncthing -SetupBackupTask $SetupBackupTask
             Write-Info 'Rebooting to continue setup...'
@@ -370,15 +388,19 @@ function Install-WSLDistroIfMissing {
     param([string]$DistroName)
 
     $installed = $false
-    $listResult = Invoke-NativeProcess -Description 'WSL distro list' -FilePath 'wsl.exe' -ArgumentList @('--list', '--quiet') -AllowFailure -Silent
-    if ($listResult.ExitCode -eq 0 -and ($listResult.StdOut | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ieq $DistroName })) {
+    $listOutput = @(& wsl.exe --list --quiet 2>&1 | ForEach-Object { "$_" })
+    $listExitCode = $LASTEXITCODE
+    if ($listExitCode -eq 0 -and ($listOutput | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ieq $DistroName })) {
         $installed = $true
     }
 
     if (-not $installed) {
         if ($PSCmdlet.ShouldProcess($DistroName, 'Install WSL distro')) {
             Write-Info "Installing WSL distro: $DistroName"
-            $null = Invoke-NativeProcess -Description "WSL distro installation ($DistroName)" -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
+            & wsl.exe --install -d $DistroName --no-launch
+            if ($LASTEXITCODE -ne 0) {
+                throw "WSL distro installation ($DistroName) failed with exit code $LASTEXITCODE"
+            }
             return $true
         }
     }
@@ -402,16 +424,10 @@ function Invoke-WSLDotfilesSetup {
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $wslLogFile = Get-WslUnixPath -DistroName $DistroName -WindowsPath $LogFileActive
 
-        $null = Invoke-NativeProcess -Description 'Dotfiles setup inside WSL' -FilePath 'wsl.exe' -ArgumentList @(
-            '-d',
-            $DistroName,
-            '-e',
-            'env',
-            "DOTFILES_FOLDER=$wslDotfilesFolder",
-            "DOTFILES_LOG_FILE=$wslLogFile",
-            'bash',
-            "$wslScriptDir/arch-wsl-main.sh"
-        )
+        & wsl.exe -d $DistroName -e env "DOTFILES_FOLDER=$wslDotfilesFolder" "DOTFILES_LOG_FILE=$wslLogFile" bash "$wslScriptDir/arch-wsl-main.sh"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE"
+        }
         Write-Success 'Dotfiles setup completed inside WSL.'
     }
 }
@@ -434,23 +450,8 @@ function Invoke-WSLSyncthingDecryption {
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $decryptAction = {
             $syncthingDir = "$wslDotfilesFolder/syncthing"
-            $result = Invoke-NativeProcess -Description 'Syncthing key decryption command' -FilePath 'wsl.exe' -ArgumentList @(
-                '-d',
-                $DistroName,
-                '-e',
-                'openssl',
-                'aes-256-cbc',
-                '-d',
-                '-salt',
-                '-pbkdf2',
-                '-iter',
-                '100000',
-                '-in',
-                "$syncthingDir/key.pem.enc",
-                '-out',
-                "$syncthingDir/key.pem"
-            ) -AllowFailure -Silent
-            if ($result.ExitCode -ne 0) {
+            & wsl.exe -d $DistroName -e openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$syncthingDir/key.pem.enc" -out "$syncthingDir/key.pem"
+            if ($LASTEXITCODE -ne 0) {
                 return $false
             }
 
@@ -458,14 +459,7 @@ function Invoke-WSLSyncthingDecryption {
         }
         $cleanupAction = {
             param($Attempt, $MaxAttempts, $LastError)
-            $null = Invoke-NativeProcess -Description 'Syncthing key cleanup' -FilePath 'wsl.exe' -ArgumentList @(
-                '-d',
-                $DistroName,
-                '-e',
-                'rm',
-                '-f',
-                "$wslDotfilesFolder/syncthing/key.pem"
-            ) -AllowFailure -Silent
+            & wsl.exe -d $DistroName -e rm -f "$wslDotfilesFolder/syncthing/key.pem" | Out-Null
         }
 
         Invoke-WithRetries -Description 'Syncthing key decryption' -MaxAttempts 3 -Action $decryptAction -OnRetry $cleanupAction
@@ -652,26 +646,26 @@ function Install-WingetApps {
 
     $primary = @(
         '7zip.7zip',
-        'voidtools.Everything.Alpha',
-        'Mozilla.Firefox',
-        'RARLab.WinRAR',
-        'Zen-Team.Zen-Browser',
-        'NordSecurity.NordVPN',
-        'Google.GoogleDrive',
-        'PDFgear.PDFgear',
-        'WinDirStat.WinDirStat',
-        'Google.Chrome',
-        'Klocman.BulkCrapUninstaller',
-        'wez.wezterm',
-        'EaseUS.TodoBackup',
-        'Parsec.Parsec',
-        'FlorianHeidenreich.Mp3tag',
-        'BleachBit.BleachBit',
-        'Discord.Discord',
-        'FastCopy.FastCopy',
-        'Obsidian.Obsidian',
-        'Microsoft.VisualStudioCode',
-        'Microsoft.PowerToys',
+        # 'voidtools.Everything.Alpha',
+        # 'Mozilla.Firefox',
+        # 'RARLab.WinRAR',
+        # 'Zen-Team.Zen-Browser',
+        # 'NordSecurity.NordVPN',
+        # 'Google.GoogleDrive',
+        # 'PDFgear.PDFgear',
+        # 'WinDirStat.WinDirStat',
+        # 'Google.Chrome',
+        # 'Klocman.BulkCrapUninstaller',
+        # 'wez.wezterm',
+        # 'EaseUS.TodoBackup',
+        # 'Parsec.Parsec',
+        # 'FlorianHeidenreich.Mp3tag',
+        # 'BleachBit.BleachBit',
+        # 'Discord.Discord',
+        # 'FastCopy.FastCopy',
+        # 'Obsidian.Obsidian',
+        # 'Microsoft.VisualStudioCode',
+        # 'Microsoft.PowerToys',
         '9NKSQGP7F2NH'
     )
     $additional = @(
@@ -899,7 +893,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.7.7"
+    Write-Info "Version: 1.8.0"
     $Script:InstallOptionalWingetApps = Resolve-SetupPreference -CurrentValue $InstallOptionalWingetApps -ParameterName 'InstallOptionalWingetApps' -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
     $Script:SetupSyncthing = Resolve-SetupPreference -CurrentValue $SetupSyncthing -ParameterName 'SetupSyncthing' -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
     $Script:SetupBackupTask = Resolve-SetupPreference -CurrentValue $SetupBackupTask -ParameterName 'SetupBackupTask' -Prompt 'Do you want to set up the backup scheduled task? (y/n)'

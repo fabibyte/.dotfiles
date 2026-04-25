@@ -298,7 +298,8 @@ install_shared_tooling() {
 		info "Installing hererocks..."
 		pip install --user hererocks
 		if command -v hererocks >/dev/null 2>&1; then
-			hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest
+            echo "Fuck"
+			#hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest
 		else
 			warning "hererocks not available after installation."
 		fi
