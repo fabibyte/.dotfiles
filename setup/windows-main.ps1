@@ -148,7 +148,8 @@ function Resolve-SetupPreference {
 
 function Write-ProcessOutput {
     param(
-        [string[]]$Lines
+        [string[]]$Lines,
+        [switch]$Silent
     )
 
     if (-not $Lines) {
@@ -162,7 +163,10 @@ function Write-ProcessOutput {
         }
 
         Add-Content -Path $Script:LogFileActive -Value $text -Encoding utf8
-        Write-Host $text
+
+        if (-not $Silent) {
+            Write-Host $text
+        }
     }
 }
 
@@ -211,12 +215,12 @@ function Invoke-NativeProcess {
             $stderrLines = @(Get-Content -LiteralPath $stderrPath)
         }
 
-        if (-not $CaptureOutputOnly) {
+        if (-not $Silent -and -not $CaptureOutputOnly) {
             Write-ProcessOutput -Lines $stdoutLines
         }
 
-        if (-not $Silent -and -not $CaptureOutputOnly) {
-            Write-ProcessOutput -Lines $stderrLines
+        if (-not $CaptureOutputOnly) {
+            Write-ProcessOutput -Lines $stderrLines -Silent:$Silent
         }
     }
     finally {
@@ -271,12 +275,6 @@ function Get-WslUnixPath {
     }
 
     return $wslPath
-}
-
-function Format-ToBashSingleQuotedString {
-    param([string]$Value)
-
-    return $Value.Replace("'", "'\''")
 }
 
 function Test-IsInteractiveSession {
@@ -404,11 +402,16 @@ function Invoke-WSLDotfilesSetup {
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $wslLogFile = Get-WslUnixPath -DistroName $DistroName -WindowsPath $LogFileActive
 
-        $escapedDotfilesFolder = Format-ToBashSingleQuotedString -Value $wslDotfilesFolder
-        $escapedLogFile = Format-ToBashSingleQuotedString -Value $wslLogFile
-        $escapedScriptDir = Format-ToBashSingleQuotedString -Value $wslScriptDir
-        $bashCmd = "DOTFILES_FOLDER='$escapedDotfilesFolder' DOTFILES_LOG_FILE='$escapedLogFile' bash '$escapedScriptDir/arch-wsl-main.sh'"
-        $null = Invoke-NativeProcess -Description 'Dotfiles setup inside WSL' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-lc', $bashCmd)
+        $null = Invoke-NativeProcess -Description 'Dotfiles setup inside WSL' -FilePath 'wsl.exe' -ArgumentList @(
+            '-d',
+            $DistroName,
+            '-e',
+            'env',
+            "DOTFILES_FOLDER=$wslDotfilesFolder",
+            "DOTFILES_LOG_FILE=$wslLogFile",
+            'bash',
+            "$wslScriptDir/arch-wsl-main.sh"
+        )
         Write-Success 'Dotfiles setup completed inside WSL.'
     }
 }
@@ -430,9 +433,23 @@ function Invoke-WSLSyncthingDecryption {
         Write-Info 'Decrypting Syncthing key...'
         $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
         $decryptAction = {
-            $escapedSyncthingDir = Format-ToBashSingleQuotedString -Value "$wslDotfilesFolder/syncthing"
-            $bashCmd = "cd '$escapedSyncthingDir' && openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in 'key.pem.enc' -out 'key.pem' >/dev/null 2>&1"
-            $result = Invoke-NativeProcess -Description 'Syncthing key decryption command' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', $bashCmd) -AllowFailure -Silent
+            $syncthingDir = "$wslDotfilesFolder/syncthing"
+            $result = Invoke-NativeProcess -Description 'Syncthing key decryption command' -FilePath 'wsl.exe' -ArgumentList @(
+                '-d',
+                $DistroName,
+                '-e',
+                'openssl',
+                'aes-256-cbc',
+                '-d',
+                '-salt',
+                '-pbkdf2',
+                '-iter',
+                '100000',
+                '-in',
+                "$syncthingDir/key.pem.enc",
+                '-out',
+                "$syncthingDir/key.pem"
+            ) -AllowFailure -Silent
             if ($result.ExitCode -ne 0) {
                 return $false
             }
@@ -441,8 +458,14 @@ function Invoke-WSLSyncthingDecryption {
         }
         $cleanupAction = {
             param($Attempt, $MaxAttempts, $LastError)
-            $escapedKeyPath = Format-ToBashSingleQuotedString -Value "$wslDotfilesFolder/syncthing/key.pem"
-            $null = Invoke-NativeProcess -Description 'Syncthing key cleanup' -FilePath 'wsl.exe' -ArgumentList @('-d', $DistroName, '-e', 'bash', '-c', "rm -f '$escapedKeyPath'") -AllowFailure -Silent
+            $null = Invoke-NativeProcess -Description 'Syncthing key cleanup' -FilePath 'wsl.exe' -ArgumentList @(
+                '-d',
+                $DistroName,
+                '-e',
+                'rm',
+                '-f',
+                "$wslDotfilesFolder/syncthing/key.pem"
+            ) -AllowFailure -Silent
         }
 
         Invoke-WithRetries -Description 'Syncthing key decryption' -MaxAttempts 3 -Action $decryptAction -OnRetry $cleanupAction
@@ -876,7 +899,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.7.5"
+    Write-Info "Version: 1.7.7"
     $Script:InstallOptionalWingetApps = Resolve-SetupPreference -CurrentValue $InstallOptionalWingetApps -ParameterName 'InstallOptionalWingetApps' -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
     $Script:SetupSyncthing = Resolve-SetupPreference -CurrentValue $SetupSyncthing -ParameterName 'SetupSyncthing' -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
     $Script:SetupBackupTask = Resolve-SetupPreference -CurrentValue $SetupBackupTask -ParameterName 'SetupBackupTask' -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
