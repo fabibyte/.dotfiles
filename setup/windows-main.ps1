@@ -146,120 +146,34 @@ function Resolve-SetupPreference {
     }
 }
 
-function Write-ProcessOutput {
+function Invoke-SuppressedNativeCommand {
     param(
-        [string[]]$Lines,
-        [switch]$Silent
-    )
-
-    if (-not $Lines) {
-        return
-    }
-
-    foreach ($line in $Lines) {
-        $text = $line -replace "`0", ''
-        if ([string]::IsNullOrWhiteSpace($text)) {
-            continue
-        }
-
-        Add-Content -Path $Script:LogFileActive -Value $text -Encoding utf8
-
-        if (-not $Silent) {
-            Write-Host $text
-        }
-    }
-}
-
-function Invoke-NativeProcess {
-    param(
-        [string]$Description,
         [string]$FilePath,
-        [string[]]$ArgumentList = @(),
-        [switch]$AllowFailure,
-        [switch]$Silent,
-        [switch]$CaptureOutputOnly
+        [string[]]$ArgumentList = @()
     )
 
     if (-not $FilePath) {
-        throw 'Invoke-NativeProcess requires a file path to execute.'
+        throw 'Invoke-SuppressedNativeCommand requires a file path to execute.'
     }
 
-    $tempDir = Join-Path $env:TEMP ("dotfiles-native-{0}" -f ([guid]::NewGuid()))
-    $stdoutPath = Join-Path $tempDir 'stdout.log'
-    $stderrPath = Join-Path $tempDir 'stderr.log'
-    $stdoutLines = @()
-    $stderrLines = @()
-    $exitCode = 0
+    $isPath = [IO.Path]::IsPathRooted($FilePath) -or ($FilePath -match '[\\/]')
+    if ($isPath) {
+        if (-not (Test-Path -LiteralPath $FilePath)) {
+            throw "Native command not found: $FilePath"
+        }
+    }
+    elseif (-not (Get-Command -Name $FilePath -CommandType Application -ErrorAction SilentlyContinue)) {
+        throw "Native command not found: $FilePath"
+    }
 
     try {
-        $null = New-Item -ItemType Directory -Path $tempDir -Force
-        $startProcessParams = @{
-            FilePath               = $FilePath
-            Wait                   = $true
-            PassThru               = $true
-            NoNewWindow            = $true
-            RedirectStandardOutput = $stdoutPath
-            RedirectStandardError  = $stderrPath
-        }
-        if ($ArgumentList -and $ArgumentList.Count -gt 0) {
-            $startProcessParams.ArgumentList = $ArgumentList
-        }
-
-        $process = Start-Process @startProcessParams
-        $exitCode = $process.ExitCode
-
-        if (Test-Path -LiteralPath $stdoutPath) {
-            $stdoutLines = @(Get-Content -LiteralPath $stdoutPath)
-        }
-        if (Test-Path -LiteralPath $stderrPath) {
-            $stderrLines = @(Get-Content -LiteralPath $stderrPath)
-        }
-
-        if (-not $Silent -and -not $CaptureOutputOnly) {
-            Write-ProcessOutput -Lines $stdoutLines
-        }
-
-        if (-not $CaptureOutputOnly) {
-            Write-ProcessOutput -Lines $stderrLines -Silent:$Silent
-        }
+        & $FilePath @ArgumentList *> $null
     }
-    finally {
-        if (Test-Path -LiteralPath $tempDir) {
-            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
+    catch {
+        return $LASTEXITCODE
     }
 
-    if (-not $AllowFailure -and $exitCode -ne 0) {
-        $combinedOutput = @($stdoutLines + $stderrLines) -join [Environment]::NewLine
-        if ($combinedOutput) {
-            throw "$Description failed with exit code $exitCode. Output: $combinedOutput"
-        }
-
-        throw "$Description failed with exit code $exitCode"
-    }
-
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        StdOut   = $stdoutLines
-        StdErr   = $stderrLines
-    }
-}
-
-function Get-CombinedProcessOutput {
-    param([object]$Result)
-
-    return @($Result.StdOut + $Result.StdErr)
-}
-
-function Test-IsExpectedWingetMiss {
-    param([object]$Result)
-
-    if (-not $Result -or $Result.ExitCode -eq 0) {
-        return $false
-    }
-
-    $combinedOutput = (Get-CombinedProcessOutput -Result $Result) -join "`n"
-    return $combinedOutput -match 'No (installed )?package found matching input criteria'
+    return $LASTEXITCODE
 }
 
 function Get-WslUnixPath {
@@ -285,10 +199,6 @@ function Get-WslUnixPath {
     }
 
     return $wslPath
-}
-
-function Test-IsInteractiveSession {
-    return (-not $ResumeLogPath) -and [Environment]::UserInteractive -and ($Host.Name -eq 'ConsoleHost')
 }
 
 function Remove-BootstrapDirectoryIfPresent {
@@ -620,24 +530,6 @@ function Register-SetupScheduledTasks {
     }
 }
 
-function Test-AppInstalled {
-    param(
-        [scriptblock]$InstalledCheck
-    )
-
-    if (-not $InstalledCheck) {
-        return $false
-    }
-
-    try {
-        return & $InstalledCheck
-    }
-    catch {
-        Write-WarningLog "Installed check failed: $($_.Exception.Message)"
-        return $false
-    }
-}
-
 function Install-WingetApps {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -707,24 +599,22 @@ function Install-WingetApps {
     Write-Info "Remove garbage ..."
     foreach ($package in $preinstalledPackagesToRemove) {
         Write-Info "Removing package: $package"
-        $removeResult = Invoke-NativeProcess -Description "winget remove ($package)" -FilePath 'winget.exe' -ArgumentList @('remove', '--all', '--exact', '--silent', '--nowarn', '--purge', '--force', '--disable-interactivity', '--accept-source-agreements', '--source', 'winget', $package) -AllowFailure -Silent
-        if (Test-IsExpectedWingetMiss -Result $removeResult) {
-            Write-Info "Package not present, skipping removal: $package"
-            continue
-        }
-        if ($removeResult.ExitCode -ne 0) {
-            throw "winget remove preinstalled app failed for $package with exit code $($removeResult.ExitCode)"
+        $removeArgs = @('remove', '--all', '--exact', '--silent', '--nowarn', '--purge', '--force', '--disable-interactivity', '--accept-source-agreements', '--source', 'winget', $package)
+        $removeExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $removeArgs
+        if ($removeExitCode -ne 0) {
+            Write-WarningLog "winget remove exited with code $removeExitCode for $package. Continuing setup."
         }
     }
     Write-Success "Garbage removed..."
 
     Write-Info 'Installing updates...'
-    $updateResult = Invoke-NativeProcess -Description 'winget update' -FilePath 'winget.exe' -ArgumentList @('update', '--all', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements') -AllowFailure -Silent
-    if ($updateResult.ExitCode -eq 0) {
+    $updateArgs = @('update', '--all', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements')
+    $updateExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $updateArgs
+    if ($updateExitCode -eq 0) {
         Write-Success "Updates installed..."
     }
     else {
-        Write-WarningLog "winget update exited with code $($updateResult.ExitCode). Continuing setup."
+        Write-WarningLog "winget update exited with code $updateExitCode. Continuing setup."
     }
 
     Write-Info 'Installing winget applications...'
@@ -733,7 +623,11 @@ function Install-WingetApps {
         Write-Info 'Installing primary winget apps...'
         foreach ($package in $primary) {
             Write-Info "Installing primary package: $package"
-            $null = Invoke-NativeProcess -Description "winget install ($package)" -FilePath 'winget.exe' -ArgumentList @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package) -Silent
+            $installArgs = @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package)
+            $installExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $installArgs
+            if ($installExitCode -ne 0) {
+                Write-WarningLog "winget install exited with code $installExitCode for $package. Continuing setup."
+            }
         }
         Write-Success "Installed primary winget apps..."
     }
@@ -743,7 +637,11 @@ function Install-WingetApps {
             Write-Info 'Installing optional winget apps...'
             foreach ($package in $additional) {
                 Write-Info "Installing optional package: $package"
-                $null = Invoke-NativeProcess -Description "winget install ($package)" -FilePath 'winget.exe' -ArgumentList @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package) -Silent
+                $installArgs = @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package)
+                $installExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $installArgs
+                if ($installExitCode -ne 0) {
+                    Write-WarningLog "winget install exited with code $installExitCode for $package. Continuing setup."
+                }
             }
             Write-Success "Installed optional winget apps..."
         }
@@ -777,9 +675,17 @@ function Install-NonWingetApps {
 
         Write-Info "Processing non-winget app: $($app.Name)"
 
-        if ($app.InstalledCheck -and (Test-AppInstalled -InstalledCheck $app.InstalledCheck)) {
-            Write-Info "Already installed: $($app.Name)"
-            continue
+        if ($app.InstalledCheck) {
+            try {
+                $installedCheck = $app.InstalledCheck
+                if (& $installedCheck) {
+                    Write-Info "Already installed: $($app.Name)"
+                    continue
+                }
+            }
+            catch {
+                Write-WarningLog "Installed check failed for $($app.Name): $($_.Exception.Message)"
+            }
         }
 
         $installerPath = $null
@@ -800,7 +706,10 @@ function Install-NonWingetApps {
                     if ($app.InstallerArgs) {
                         $installerArgs = @($app.InstallerArgs)
                     }
-                    $null = Invoke-NativeProcess -Description "Installer for $($app.Name)" -FilePath $installerPath -ArgumentList $installerArgs
+                    $installerExitCode = Invoke-SuppressedNativeCommand -FilePath $installerPath -ArgumentList $installerArgs
+                    if ($installerExitCode -ne 0) {
+                        throw "Installer for $($app.Name) failed with exit code $installerExitCode"
+                    }
                 }
                 'ZipInstall' {
                     $zipName = if ($app.ZipName) { $app.ZipName } else { [IO.Path]::GetFileNameWithoutExtension($app.Uri) }
@@ -828,7 +737,10 @@ function Install-NonWingetApps {
                     if ($app.InstallerArgs) {
                         $installerArgs = @($app.InstallerArgs)
                     }
-                    $null = Invoke-NativeProcess -Description "Installer for $($app.Name)" -FilePath $installerPath -ArgumentList $installerArgs
+                    $installerExitCode = Invoke-SuppressedNativeCommand -FilePath $installerPath -ArgumentList $installerArgs
+                    if ($installerExitCode -ne 0) {
+                        throw "Installer for $($app.Name) failed with exit code $installerExitCode"
+                    }
                 }
                 'RemoteScript' {
                     Write-Info "Executing remote script from $($app.Uri)"
@@ -836,7 +748,11 @@ function Install-NonWingetApps {
                     $remoteScriptPath = Join-Path $tempDir "$($app.Name)-remote.ps1"
                     Invoke-WebRequest -Uri $app.Uri -OutFile $remoteScriptPath -UseBasicParsing
 
-                    $null = Invoke-NativeProcess -Description "Remote script install for $($app.Name)" -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $remoteScriptPath)
+                    $remoteScriptArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $remoteScriptPath)
+                    $remoteScriptExitCode = Invoke-SuppressedNativeCommand -FilePath 'powershell.exe' -ArgumentList $remoteScriptArgs
+                    if ($remoteScriptExitCode -ne 0) {
+                        throw "Remote script install for $($app.Name) failed with exit code $remoteScriptExitCode"
+                    }
                 }
                 default {
                     throw "Unknown non-winget app type: $($app.Type)"
@@ -893,7 +809,7 @@ Invoke-RunAsAdmin
 Initialize-Logging
 
 try {
-    Write-Info "Version: 1.8.0"
+    Write-Info "Version: 1.8.1"
     $Script:InstallOptionalWingetApps = Resolve-SetupPreference -CurrentValue $InstallOptionalWingetApps -ParameterName 'InstallOptionalWingetApps' -Prompt 'Do you want to install optional winget apps (gaming and additional tools)? (y/n)'
     $Script:SetupSyncthing = Resolve-SetupPreference -CurrentValue $SetupSyncthing -ParameterName 'SetupSyncthing' -Prompt 'Do you want to set up Syncthing task registration and key decryption? (y/n)'
     $Script:SetupBackupTask = Resolve-SetupPreference -CurrentValue $SetupBackupTask -ParameterName 'SetupBackupTask' -Prompt 'Do you want to set up the backup scheduled task? (y/n)'
@@ -934,7 +850,7 @@ finally {
     if ($Script:SetupCompleted) {
         Remove-BootstrapDirectoryIfPresent
     }
-    if ($Script:HadSetupError -or (Test-IsInteractiveSession)) {
+    if ($Script:HadSetupError) {
         $null = Read-LoggedHost 'Press Enter to close'
     }
 }
