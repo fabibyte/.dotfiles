@@ -36,45 +36,45 @@ try {
     )
 
     $AppsToInstall = @(
-        'Google.AndroidStudio',
-        '9NZVDKPMR9RD', # Mozilla.Firefox.MSIX
-        '9NN77TCQ1NC8', # FlorianHeidenreich.Mp3tag
-        'LizardByte.Sunshine',
-        'RARLab.WinRAR',
-        'Zen-Team.Zen-Browser',
-        'NordSecurity.NordVPN',
-        'Google.GoogleDrive',
-        'PDFgear.PDFgear',
-        'wez.wezterm',
-        'WinDirStat.WinDirStat',
-        'Google.Chrome',
-        'Klocman.BulkCrapUninstaller',
-        'Guru3D.Afterburner',
-        'EaseUS.TodoBackup',
-        'BleachBit.BleachBit',
+        # 'Google.AndroidStudio',
+        # '9NZVDKPMR9RD', # Mozilla.Firefox.MSIX
+        # '9NN77TCQ1NC8', # FlorianHeidenreich.Mp3tag
+        # 'LizardByte.Sunshine',
+        # 'RARLab.WinRAR',
+        # 'Zen-Team.Zen-Browser',
+        # 'NordSecurity.NordVPN',
+        # 'Google.GoogleDrive',
+        # 'PDFgear.PDFgear',
+        # 'wez.wezterm',
+        # 'WinDirStat.WinDirStat',
+        # 'Google.Chrome',
+        # 'Klocman.BulkCrapUninstaller',
+        # 'Guru3D.Afterburner',
+        # 'EaseUS.TodoBackup',
+        # 'BleachBit.BleachBit',
         'FastCopy.FastCopy',
-        'Obsidian.Obsidian',
-        'Syncthing.Syncthing',
-        'XP89DCGQ3K6VLD', # Microsoft.PowerToys
-        'XP9KHM4BK9FZ7Q', # Microsoft.VisualStudioCode
-        '9NKSQGP7F2NH', # WhatsApp
-        '9NT1R1C2HH7J', # ChatGPT
-        '9PLM9XGG6VKS', # Codex
-        'Logitech.GHUB',
-        'Corsair.iCUE.5',
-        'LegacyGames.LegacyGamesLauncher',
-        'XP99VR1BPSBQJ2', # EpicGames.EpicGamesLauncher
-        'XPDM5VSMTKQLBJ', # Blizzard.BattleNet
-        'RockstarGames.Launcher',
-        'Valve.Steam',
-        'XPDP2QW12DFSFK', # Ubisoft.Connect
-        '9NVMNJCR03XV', # MSI Center
-        'GOG.Galaxy',
-        'ElectronicArts.EADesktop',
-        'XPDC2RH70K22MN', # Discord.Discord
-        'Playnite.Playnite',
-        'ItchIo.Itch',
-        'Amazon.Games',
+        # 'Obsidian.Obsidian',
+        # 'Syncthing.Syncthing',
+        # 'XP89DCGQ3K6VLD', # Microsoft.PowerToys
+        # 'XP9KHM4BK9FZ7Q', # Microsoft.VisualStudioCode
+        # '9NKSQGP7F2NH', # WhatsApp
+        # '9NT1R1C2HH7J', # ChatGPT
+        # '9PLM9XGG6VKS', # Codex
+        # 'Logitech.GHUB',
+        # 'Corsair.iCUE.5',
+        # 'LegacyGames.LegacyGamesLauncher',
+        # 'XP99VR1BPSBQJ2', # EpicGames.EpicGamesLauncher
+        # 'XPDM5VSMTKQLBJ', # Blizzard.BattleNet
+        # 'RockstarGames.Launcher',
+        # 'Valve.Steam',
+        # 'XPDP2QW12DFSFK', # Ubisoft.Connect
+        # '9NVMNJCR03XV', # MSI Center
+        # 'GOG.Galaxy',
+        # 'ElectronicArts.EADesktop',
+        # 'XPDC2RH70K22MN', # Discord.Discord
+        # 'Playnite.Playnite',
+        # 'ItchIo.Itch',
+        # 'Amazon.Games',
         'AppWork.JDownloader'
     )
 
