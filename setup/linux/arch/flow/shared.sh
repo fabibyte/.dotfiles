@@ -1,16 +1,16 @@
-ARCH_FLOW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$ARCH_FLOW_DIR/../../shared.sh"
+ARCH_FLOW_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ARCH_FLOW_DIRECTORY/../../shared.sh"
 
-readonly TEMP_SUDOERS="/etc/sudoers.d/passwordless-bootstrap"
+readonly TEMP_SUDOERS_FILE="/etc/sudoers.d/passwordless-bootstrap"
 readonly BOOTSTRAP_USER="fabi"
 readonly BOOTSTRAP_UID="1000"
 readonly BOOTSTRAP_GID="1000"
 readonly SUDO_GROUP_GID="27"
-readonly SUDO_GROUP_CONFIG="/etc/sudoers.d/10-sudo-group"
+readonly SUDO_GROUP_CONFIG_FILE="/etc/sudoers.d/10-sudo-group"
 
 cleanup_temp_sudoers() {
-	if [[ -f "$TEMP_SUDOERS" ]]; then
-		rm -f -- "$TEMP_SUDOERS"
+	if [[ -f "$TEMP_SUDOERS_FILE" ]]; then
+		rm -f -- "$TEMP_SUDOERS_FILE"
 	fi
 }
 
@@ -64,9 +64,9 @@ setup_sudo() {
 	fi
 
 	info "Configuring sudoers..."
-	printf '%%sudo ALL=(ALL:ALL) ALL\n' >"$SUDO_GROUP_CONFIG"
-	chmod 0440 "$SUDO_GROUP_CONFIG"
-	visudo -cf "$SUDO_GROUP_CONFIG" >/dev/null || abort "Could not validate $SUDO_GROUP_CONFIG."
+	printf '%%sudo ALL=(ALL:ALL) ALL\n' >"$SUDO_GROUP_CONFIG_FILE"
+	chmod 0440 "$SUDO_GROUP_CONFIG_FILE"
+	visudo -cf "$SUDO_GROUP_CONFIG_FILE" >/dev/null || abort "Could not validate $SUDO_GROUP_CONFIG_FILE."
 
 	success "sudo is configured."
 }
@@ -90,9 +90,9 @@ ensure_bootstrap_user() {
 enable_bootstrap_sudo() {
 	[[ "$(whoami)" != "root" ]] && return 0
 
-	printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$BOOTSTRAP_USER" >"$TEMP_SUDOERS"
-	chmod 0440 "$TEMP_SUDOERS"
-	visudo -cf "$TEMP_SUDOERS" >/dev/null || abort "Could not validate $TEMP_SUDOERS."
+	printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$BOOTSTRAP_USER" >"$TEMP_SUDOERS_FILE"
+	chmod 0440 "$TEMP_SUDOERS_FILE"
+	visudo -cf "$TEMP_SUDOERS_FILE" >/dev/null || abort "Could not validate $TEMP_SUDOERS_FILE."
 }
 
 run_as_bootstrap_user() {
@@ -108,12 +108,12 @@ run_as_bootstrap_user() {
 remount_c() {
 	local target_uid="$BOOTSTRAP_UID"
 	local target_gid="$BOOTSTRAP_GID"
-	local current_uid
-	local current_gid
-	current_uid=$(stat -c '%u' /mnt/c)
-	current_gid=$(stat -c '%g' /mnt/c)
+	local current_mount_uid
+	local current_mount_gid
+	current_mount_uid=$(stat -c '%u' /mnt/c)
+	current_mount_gid=$(stat -c '%g' /mnt/c)
 
-	if [ "$current_uid" -ne "$target_uid" ] || [ "$current_gid" -ne "$target_gid" ]; then
+	if [[ "$current_mount_uid" -ne "$target_uid" || "$current_mount_gid" -ne "$target_gid" ]]; then
 		sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$target_uid,gid=$target_gid,cache=5,access=client,msize=65536"
 	else
 		info "Already mounted with correct UID/GID."
@@ -121,9 +121,9 @@ remount_c() {
 }
 
 change_wsl_distribution_conf() {
-	local conf_file="/etc/wsl-distribution.conf"
-	local desired
-	desired=$(
+	local config_file="/etc/wsl-distribution.conf"
+	local desired_content
+	desired_content=$(
 		cat <<EOF
 [oobe]
 defaultUid = $BOOTSTRAP_UID
@@ -134,14 +134,14 @@ icon = /usr/lib/wsl/archlinux.ico
 EOF
 	)
 
-	if [ -f "$conf_file" ] && [ "$(<"$conf_file")" = "$desired" ]; then
-		success "$conf_file already has the desired content."
+	if [[ -f "$config_file" && "$(<"$config_file")" = "$desired_content" ]]; then
+		success "$config_file already has the desired content."
 		return 0
 	fi
 
-	info "Writing $conf_file..."
-	printf '%s\n' "$desired" | sudo tee "$conf_file" >/dev/null
-	success "$conf_file has been updated."
+	info "Writing $config_file..."
+	printf '%s\n' "$desired_content" | sudo tee "$config_file" >/dev/null
+	success "$config_file has been updated."
 }
 
 install_packages() {

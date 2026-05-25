@@ -8,8 +8,8 @@ class Logger {
             $resolvedLogPath = $ResumeLogFilePath
         }
         else {
-            $Timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
-            $resolvedLogPath = Join-Path $NewLogFileBasePath "setup_$Timestamp.log"
+            $timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+            $resolvedLogPath = Join-Path $NewLogFileBasePath "setup_$timestamp.log"
         } 
 
         if (-not (Test-Path $resolvedLogPath)) {
@@ -67,7 +67,7 @@ class Logger {
     }
 }
 
-function Remove-NullArgument([object[]]$Arguments = @()) {
+function Remove-NullArguments([object[]]$Arguments = @()) {
     $filteredArguments = @()
 
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
@@ -90,16 +90,16 @@ function Remove-NullArgument([object[]]$Arguments = @()) {
 }
 
 function Invoke-RunAsAdmin([string]$ScriptPath, [string]$ResumeLogPath) {
-    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($current)
+    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
 
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         if (-not $ScriptPath) {
             throw 'No scriptPath provided.'
         }
 
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-ResumeLogPath', $ResumeLogPath)
-        $finalArgs = Remove-NullArgument -Arguments $arguments
+        $finalArgs = Remove-NullArguments -Arguments $arguments
         Start-Process -FilePath 'powershell.exe' -ArgumentList $finalArgs -Verb RunAs
         exit
     }
@@ -187,13 +187,13 @@ function Invoke-WithRetries([string]$Description, [int]$MaxAttempts = 3, [script
     throw "$Description failed after $MaxAttempts attempts. Last error: $lastError"
 }
 
-function Register-ScheduledTasks([array]$ScheduledTaskCommands) {
+function Register-ScheduledTasks([array]$ScheduledTasks) {
     [Logger]::WriteInfo("Creating scheduled tasks...")
 
-    foreach ($task in $ScheduledTaskCommands) {
-        Unregister-ScheduledTaskIfPresent -TaskName $task.Name
-        $null = Register-ScheduledTask -TaskName $task.Name -Action $task.Action -Trigger $task.Trigger -RunLevel $task.RunLevel
-        [Logger]::WriteSuccess("Registered scheduled task: $($task.Name)")
+    foreach ($scheduledTask in $ScheduledTasks) {
+        Unregister-ScheduledTaskIfPresent -TaskName $scheduledTask.Name
+        $null = Register-ScheduledTask -TaskName $scheduledTask.Name -Action $scheduledTask.Action -Trigger $scheduledTask.Trigger -RunLevel $scheduledTask.RunLevel
+        [Logger]::WriteSuccess("Registered scheduled task: $($scheduledTask.Name)")
     }
 }
 
@@ -211,11 +211,11 @@ function Register-RebootTask([string]$ScriptPath, [string]$LogPath) {
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
     $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
 
-    $scheduledTaskCommands = @(
+    $scheduledTasks = @(
         @{ Name = "ContinueSetupAfterReboot"; Action = $action; Trigger = $trigger; RunLevel = 'Highest' }
     )
 
-    Register-ScheduledTasks -ScheduledTaskCommands $scheduledTaskCommands
+    Register-ScheduledTasks -ScheduledTasks $scheduledTasks
 }
 
 function Unregister-RebootTask {
@@ -312,63 +312,63 @@ function Invoke-WSLDecryption([string]$Description, [string]$DistroName, [string
     }
 
     Invoke-WithRetries -Description $Description -MaxAttempts 3 -Action $decryptAction
-    [Logger]::WriteSuccess('Decryption successfull!')
+    [Logger]::WriteSuccess('Decryption successful.')
 }
 
-function New-Symlink([string]$Src, [string]$Tgt) {
-    if (-not $Src -or -not $Tgt) {
-        [Logger]::WriteError("New-Symlink requires -Src and -Tgt arguments")
+function New-Symlink([string]$SourcePath, [string]$TargetPath) {
+    if ((-not $SourcePath) -or (-not $TargetPath)) {
+        [Logger]::WriteError("New-Symlink requires -SourcePath and -TargetPath arguments")
         return
     }
 
-    if (-not (Test-Path -Path $Src)) {
-        [Logger]::WriteWarning("Source does not exist: $Src")
+    if (-not (Test-Path -Path $SourcePath)) {
+        [Logger]::WriteWarning("Source does not exist: $SourcePath")
         return
     }
 
-    if (Test-Path -LiteralPath $Tgt) {
-        $item = Get-Item -LiteralPath $Tgt -Force
-        $isLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    if (Test-Path -LiteralPath $TargetPath) {
+        $targetItem = Get-Item -LiteralPath $TargetPath -Force
+        $targetIsLink = ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
 
-        if ($isLink) {
-            $currentTarget = $item.Target 2>$null
-            if ($currentTarget -and $currentTarget -eq $Src) {
-                [Logger]::WriteInfo("Symlink already correct: $Tgt -> $Src")
+        if ($targetIsLink) {
+            $currentTargetPath = $targetItem.Target 2>$null
+            if ($currentTargetPath -and $currentTargetPath -eq $SourcePath) {
+                [Logger]::WriteInfo("Symlink already correct: $TargetPath -> $SourcePath")
                 return
             }
 
-            Remove-Item -LiteralPath $Tgt -Force
+            Remove-Item -LiteralPath $TargetPath -Force
         }
         else {
-            [Logger]::WriteWarning("Target exists and is not a symlink; skipping: $Tgt")
+            [Logger]::WriteWarning("Target exists and is not a symlink; skipping: $TargetPath")
             return
         }
     }
 
-    $tgtDir = Split-Path -Parent $Tgt
-    if (-not (Test-Path $tgtDir)) {
-        $null = New-Item -ItemType Directory -Path $tgtDir -Force
+    $targetDirectory = Split-Path -Parent $TargetPath
+    if (-not (Test-Path $targetDirectory)) {
+        $null = New-Item -ItemType Directory -Path $targetDirectory -Force
     }
 
-    $null = New-Item -ItemType SymbolicLink -Path $Tgt -Target $Src -Force
-    [Logger]::WriteSuccess("Linked $Tgt -> $Src")
+    $null = New-Item -ItemType SymbolicLink -Path $TargetPath -Target $SourcePath -Force
+    [Logger]::WriteSuccess("Linked $TargetPath -> $SourcePath")
 }
 
-function New-SymlinkTree([string]$Src, [string]$Tgt) {
-    if (-not (Test-Path -Path $Src -PathType Container)) {
-        [Logger]::WriteWarning("Source directory does not exist: $Src")
+function New-SymlinkTree([string]$SourceDirectory, [string]$TargetDirectory) {
+    if (-not (Test-Path -Path $SourceDirectory -PathType Container)) {
+        [Logger]::WriteWarning("Source directory does not exist: $SourceDirectory")
         return
     }
 
-    Get-ChildItem -Path $Src -File -Recurse | ForEach-Object {
-        $relPath = $_.FullName.Substring($Src.TrimEnd('\').Length + 1)
-        $tgtFile = Join-Path $Tgt $relPath
-        New-Symlink -Src $_.FullName -Tgt $tgtFile
+    Get-ChildItem -Path $SourceDirectory -File -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($SourceDirectory.TrimEnd('\').Length + 1)
+        $targetFilePath = Join-Path $TargetDirectory $relativePath
+        New-Symlink -SourcePath $_.FullName -TargetPath $targetFilePath
     }
 }
 
 function Remove-WingetApps([string[]]$AppsToRemove) {
-    [Logger]::WriteInfo("Remove garbage ...")
+    [Logger]::WriteInfo('Removing unwanted winget applications...')
     foreach ($package in $AppsToRemove) {
         [Logger]::WriteInfo("Removing package: $package")
         $removeArgs = @('remove', '--all', '--exact', '--silent', '--nowarn', '--purge', '--force', '--disable-interactivity', '--accept-source-agreements', '--source', 'winget', $package)
@@ -377,7 +377,7 @@ function Remove-WingetApps([string[]]$AppsToRemove) {
             [Logger]::WriteWarning("winget remove exited with code $removeExitCode for package: $package.")
         }
     }
-    [Logger]::WriteInfo("Garbage removed...")
+    [Logger]::WriteInfo('Unwanted winget application removal complete.')
 }
 
 function Update-WingetApps() {

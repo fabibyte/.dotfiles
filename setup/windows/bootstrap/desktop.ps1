@@ -1,47 +1,47 @@
 $ErrorActionPreference = 'Stop'
 
-$archiveUrl = 'https://github.com/fabibyte/.dotfiles/archive/refs/heads/main.zip'
-$mainFilePath = 'windows/flow/desktop.ps1'
-$dotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
-$setupRoot = ""
-$setupScript = ""
+$ArchiveUrl = 'https://github.com/fabibyte/.dotfiles/archive/refs/heads/main.zip'
+$FlowScriptRelativePath = 'windows/flow/desktop.ps1'
+$DotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
+$SetupRoot = ''
+$FlowScriptPath = ''
 
 if ($PSCommandPath) {
-    $setupRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-    $setupScript = Join-Path $setupRoot $mainFilePath
+    $SetupRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+    $FlowScriptPath = Join-Path $SetupRoot $FlowScriptRelativePath
     
-    if (-not (Test-Path $setupScript)) {
-        throw "Could not find $setupScript locally."
+    if (-not (Test-Path $FlowScriptPath)) {
+        throw "Could not find $FlowScriptPath locally."
     }
 }
 else {
     Write-Host "Running remotely... Downloading dotfiles archive." -ForegroundColor Cyan
-    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "dotfiles-bootstrap-$([guid]::NewGuid().ToString('N'))"
-    $archivePath = Join-Path $tempRoot 'dotfiles.zip'
-    $extractPath = Join-Path $tempRoot 'extract'
+    $TempDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "dotfiles-bootstrap-$([guid]::NewGuid().ToString('N'))"
+    $ArchivePath = Join-Path $TempDirectory 'dotfiles.zip'
+    $ExtractPath = Join-Path $TempDirectory 'extract'
 
     try {
-        $null = New-Item -ItemType Directory -Path $tempRoot -Force
-        $null = New-Item -ItemType Directory -Path $extractPath -Force
+        $null = New-Item -ItemType Directory -Path $TempDirectory -Force
+        $null = New-Item -ItemType Directory -Path $ExtractPath -Force
 
-        Invoke-WebRequest -UseBasicParsing -Uri $archiveUrl -OutFile $archivePath
-        Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+        Invoke-WebRequest -UseBasicParsing -Uri $ArchiveUrl -OutFile $ArchivePath
+        Expand-Archive -Path $ArchivePath -DestinationPath $ExtractPath -Force
 
-        $archiveRoot = Join-Path $extractPath '.dotfiles-main'
-        $null = New-Item -ItemType Directory -Path $dotfilesFolder -Force
-        Get-ChildItem -LiteralPath $archiveRoot -Force | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $dotfilesFolder -Recurse -Force
+        $ArchiveRoot = Join-Path $ExtractPath '.dotfiles-main'
+        $null = New-Item -ItemType Directory -Path $DotfilesFolder -Force
+        Get-ChildItem -LiteralPath $ArchiveRoot -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $DotfilesFolder -Recurse -Force
         }
     }
     finally {
-        if (Test-Path -LiteralPath $tempRoot) {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $TempDirectory) {
+            Remove-Item -LiteralPath $TempDirectory -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    $setupScript = Join-Path (Join-Path $dotfilesFolder 'setup') $mainFilePath
+    $FlowScriptPath = Join-Path (Join-Path $DotfilesFolder 'setup') $FlowScriptRelativePath
 }
 
-$arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $setupScript)
-& powershell @arg
+$PowerShellArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $FlowScriptPath)
+& powershell @PowerShellArguments
 exit $LASTEXITCODE

@@ -71,13 +71,13 @@ error() {
 }
 
 abort() {
-	local code=1
+	local exit_code=1
 	if [[ "$1" =~ ^[0-9]+$ ]]; then
-		code="$1"
+		exit_code="$1"
 		shift
 	fi
 	error "$*"
-	exit "$code"
+	exit "$exit_code"
 }
 
 ensure_dotfiles_git_repo() {
@@ -107,69 +107,69 @@ ensure_dotfiles_git_repo() {
 }
 
 create_symlink() {
-	local src="$1"
-	local tgt="$2"
+	local source_path="$1"
+	local target_path="$2"
 
-	if [ -z "$src" ] || [ -z "$tgt" ]; then
-		error "create_symlink requires <src> and <target> arguments"
+	if [[ -z "$source_path" || -z "$target_path" ]]; then
+		error "create_symlink requires <source-path> and <target-path> arguments"
 		return 1
 	fi
 
-	if [ ! -e "$src" ]; then
-		warning "Source does not exist: $src"
+	if [[ ! -e "$source_path" ]]; then
+		warning "Source does not exist: $source_path"
 		return
 	fi
 
-	if [ -L "$tgt" ]; then
-		local current
-		current=$(readlink -f "$tgt")
-		if [ "$current" = "$src" ]; then
-			info "Symlink already correct: $tgt -> $src"
+	if [[ -L "$target_path" ]]; then
+		local current_target_path
+		current_target_path=$(readlink -f "$target_path")
+		if [[ "$current_target_path" = "$source_path" ]]; then
+			info "Symlink already correct: $target_path -> $source_path"
 			return
 		fi
 
-		rm -f "$tgt"
+		rm -f "$target_path"
 	fi
 
-	if [ -e "$tgt" ]; then
-		warning "Target exists and is not a symlink; skipping: $tgt"
+	if [[ -e "$target_path" ]]; then
+		warning "Target exists and is not a symlink; skipping: $target_path"
 		return
 	fi
 
-	mkdir -p "$(dirname "$tgt")"
-	ln -s "$src" "$tgt"
-	success "Linked $tgt -> $src"
+	mkdir -p "$(dirname "$target_path")"
+	ln -s "$source_path" "$target_path"
+	success "Linked $target_path -> $source_path"
 }
 
 link_tree() {
-	local src_dir="$1"
-	local tgt_dir="$2"
+	local source_directory="$1"
+	local target_directory="$2"
 
-	if [ ! -d "$src_dir" ]; then
-		warning "Source directory does not exist: $src_dir"
+	if [[ ! -d "$source_directory" ]]; then
+		warning "Source directory does not exist: $source_directory"
 		return
 	fi
 
-	find "$src_dir" -type f -print0 | while IFS= read -r -d '' file; do
-		local rel_path
-		rel_path="${file#"$src_dir"/}"
-		local tgt_file="$tgt_dir/$rel_path"
-		create_symlink "$file" "$tgt_file"
+	find "$source_directory" -type f -print0 | while IFS= read -r -d '' source_file_path; do
+		local relative_path
+		relative_path="${source_file_path#"$source_directory"/}"
+		local target_file_path="$target_directory/$relative_path"
+		create_symlink "$source_file_path" "$target_file_path"
 	done
 }
 
 fetch_file() {
 	local url="$1"
-	local target="$2"
+	local target_path="$2"
 
-	if [ -f "$target" ]; then
-		info "File already present, skipping fetch: $target"
+	if [[ -f "$target_path" ]]; then
+		info "File already present, skipping fetch: $target_path"
 		return
 	fi
 
-	mkdir -p "$(dirname "$target")"
-	if curl -fsSL "$url" -o "$target"; then
-		success "Fetched $url -> $target"
+	mkdir -p "$(dirname "$target_path")"
+	if curl -fsSL "$url" -o "$target_path"; then
+		success "Fetched $url -> $target_path"
 	else
 		error "Failed to fetch $url"
 		return 1

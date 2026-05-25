@@ -4,26 +4,26 @@ set -euo pipefail
 
 ARCHIVE_URL="https://github.com/fabibyte/.dotfiles/archive/refs/heads/main.tar.gz"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
-MAIN_FILEPATH="linux/arch/flow/wsl.sh"
+FLOW_SCRIPT_RELATIVE_PATH="linux/arch/flow/wsl.sh"
 DOTFILES_FOLDER="${DOTFILES_FOLDER:-$HOME/.dotfiles}"
-MAIN_SCRIPT_ROOT=""
-MAIN_SCRIPT=""
+SETUP_ROOT=""
+FLOW_SCRIPT_PATH=""
 
 if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
-	MAIN_SCRIPT_ROOT="$(cd "$(dirname "$SCRIPT_SOURCE")/../../.." && pwd)"
-	MAIN_SCRIPT="$MAIN_SCRIPT_ROOT/$MAIN_FILEPATH"
+	SETUP_ROOT="$(cd "$(dirname "$SCRIPT_SOURCE")/../../.." && pwd)"
+	FLOW_SCRIPT_PATH="$SETUP_ROOT/$FLOW_SCRIPT_RELATIVE_PATH"
 
-	if [[ ! -f "$MAIN_SCRIPT" ]]; then
-		printf "\033[0;31mCould not find $MAIN_SCRIPT locally.\033[0m\n"
+	if [[ ! -f "$FLOW_SCRIPT_PATH" ]]; then
+		printf "\033[0;31mCould not find %s locally.\033[0m\n" "$FLOW_SCRIPT_PATH"
 		exit 1
 	fi
 else
 	printf '\033[0;36mRunning remotely... Downloading dotfiles archive.\033[0m\n'
-	TEMP_ROOT="$(mktemp -d)"
-	trap 'rm -rf -- "$TEMP_ROOT"' EXIT
+	TEMP_DIRECTORY="$(mktemp -d)"
+	trap 'rm -rf -- "$TEMP_DIRECTORY"' EXIT
 
-	ARCHIVE_PATH="$TEMP_ROOT/dotfiles.tar.gz"
-	EXTRACT_PATH="$TEMP_ROOT/extract"
+	ARCHIVE_PATH="$TEMP_DIRECTORY/dotfiles.tar.gz"
+	EXTRACT_PATH="$TEMP_DIRECTORY/extract"
 	mkdir -p "$EXTRACT_PATH"
 
 	curl -fsSL "$ARCHIVE_URL" -o "$ARCHIVE_PATH"
@@ -32,8 +32,8 @@ else
 	ARCHIVE_ROOT="$EXTRACT_PATH/.dotfiles-main"
 	mkdir -p "$DOTFILES_FOLDER"
 	cp -a "$ARCHIVE_ROOT"/. "$DOTFILES_FOLDER"/
-	chmod 755 "$DOTFILES_FOLDER/setup/$MAIN_FILEPATH"
-	MAIN_SCRIPT="$DOTFILES_FOLDER/setup/$MAIN_FILEPATH"
+	chmod 755 "$DOTFILES_FOLDER/setup/$FLOW_SCRIPT_RELATIVE_PATH"
+	FLOW_SCRIPT_PATH="$DOTFILES_FOLDER/setup/$FLOW_SCRIPT_RELATIVE_PATH"
 fi
 
-exec bash "$MAIN_SCRIPT" "$@"
+exec bash "$FLOW_SCRIPT_PATH" "$@"

@@ -78,7 +78,7 @@ try {
         'AppWork.JDownloader'
     )
 
-    $ScheduledTaskCommands = @(
+    $ScheduledTasks = @(
         @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wezterm\wezterm.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
         @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
         @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\backup\backup.vbs"; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest' }
@@ -99,11 +99,11 @@ try {
     Invoke-WSLDecryption -Description 'Syncthing key decryption' -DistroName $WslDistroName -InputPath "$DotfilesFolder\syncthing\key.pem.enc" -OutputPath "$DotfilesFolder\syncthing\key.pem"
 
     [Logger]::WriteInfo('Creating symbolic links...')
-    New-Symlink -Src "$DotfilesFolder\wezterm\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
-    New-SymlinkTree -Src "$DotFilesFolder\.ssh" -Tgt "$env:USERPROFILE\.ssh"
-    New-SymlinkTree -Src "$DotfilesFolder\syncthing" -Tgt "$env:LOCALAPPDATA\Syncthing"
+    New-Symlink -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    New-SymlinkTree -SourceDirectory "$DotfilesFolder\.ssh" -TargetDirectory "$env:USERPROFILE\.ssh"
+    New-SymlinkTree -SourceDirectory "$DotfilesFolder\syncthing" -TargetDirectory "$env:LOCALAPPDATA\Syncthing"
 
-    Register-ScheduledTasks -ScheduledTaskCommands $ScheduledTaskCommands
+    Register-ScheduledTasks -ScheduledTasks $ScheduledTasks
 
     [Logger]::WriteSuccess('Windows setup completed successfully.')
 }

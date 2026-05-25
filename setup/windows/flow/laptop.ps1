@@ -57,7 +57,7 @@ try {
         'XPDC2RH70K22MN' # Discord.Discord
     )
 
-    $ScheduledTaskCommands = @(
+    $ScheduledTasks = @(
         @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wezterm\wezterm.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' }
     )
 
@@ -74,10 +74,10 @@ try {
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath [Logger]::LogFileActive -ScriptPath $WslScriptPath
 
     [Logger]::WriteInfo('Creating symbolic links...')
-    New-Symlink -Src "$DotfilesFolder\wezterm\.wezterm.lua" -Tgt "$env:USERPROFILE\.wezterm.lua"
-    New-SymlinkTree -Src "$DotFilesFolder\.ssh" -Tgt "$env:USERPROFILE\.ssh"
+    New-Symlink -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    New-SymlinkTree -SourceDirectory "$DotfilesFolder\.ssh" -TargetDirectory "$env:USERPROFILE\.ssh"
 
-    Register-ScheduledTasks -ScheduledTaskCommands $ScheduledTaskCommands
+    Register-ScheduledTasks -ScheduledTasks $ScheduledTasks
 
     [Logger]::WriteSuccess('Windows setup completed successfully.')
 }
