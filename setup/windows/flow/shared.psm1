@@ -1,70 +1,72 @@
-class Logger {
-    static [string]$LogFileActive
+$script:LogFileActive = ''
 
-    static [void] Init([string]$NewLogFileBasePath, [string]$ResumeLogFilePath) {
-        $resolvedLogPath = ""
+function Initialize-Logger([string]$NewLogFileBasePath, [string]$ResumeLogFilePath) {
+    $resolvedLogPath = ''
 
-        if ($ResumeLogFilePath) {
-            $resolvedLogPath = $ResumeLogFilePath
-        }
-        else {
-            $timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
-            $resolvedLogPath = Join-Path $NewLogFileBasePath "setup_$timestamp.log"
-        } 
-
-        if (-not (Test-Path $resolvedLogPath)) {
-            $null = New-Item -ItemType File -Path $resolvedLogPath -Force
-        }
-
-        [Logger]::LogFileActive = $resolvedLogPath
+    if ($ResumeLogFilePath) {
+        $resolvedLogPath = $ResumeLogFilePath
+    }
+    else {
+        $timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+        $resolvedLogPath = Join-Path $NewLogFileBasePath "setup_$timestamp.log"
     }
 
-    static [void] Write([string]$Level, [string]$Message) {
-        if ($Level -notin @('INFO', 'SUCCESS', 'WARNING', 'ERROR')) {
-            throw "Unsupported log level: $Level"
-        }
-
-        $colorMap = @{
-            INFO    = 'Cyan'
-            SUCCESS = 'Green'
-            WARNING = 'Yellow'
-            ERROR   = 'Red'
-        }
-
-        $color = $colorMap[$Level]
-        $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-        $formatted = "[$timestamp] [$Level] $Message"
-
-        if ([Logger]::LogFileActive) {
-            Add-Content -Path [Logger]::LogFileActive -Value $formatted -Encoding utf8
-        }
-
-        Write-Host $formatted -ForegroundColor $color
+    if (-not (Test-Path $resolvedLogPath)) {
+        $null = New-Item -ItemType File -Path $resolvedLogPath -Force
     }
 
-    static [void] WriteInfo([string]$Message) {
-        [Logger]::Write('INFO', $Message)
+    $script:LogFileActive = $resolvedLogPath
+}
+
+function Get-LogFileActive {
+    return $script:LogFileActive
+}
+
+function Write-Log([string]$Level, [string]$Message) {
+    if ($Level -notin @('INFO', 'SUCCESS', 'WARNING', 'ERROR')) {
+        throw "Unsupported log level: $Level"
     }
 
-    static [void] WriteSuccess([string]$Message) {
-        [Logger]::Write('SUCCESS', $Message)
+    $colorMap = @{
+        INFO    = 'Cyan'
+        SUCCESS = 'Green'
+        WARNING = 'Yellow'
+        ERROR   = 'Red'
     }
 
-    static [void] WriteWarning([string]$Message) {
-        [Logger]::Write('WARNING', $Message)
+    $color = $colorMap[$Level]
+    $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $formatted = "[$timestamp] [$Level] $Message"
+
+    if ($script:LogFileActive) {
+        Add-Content -Path $script:LogFileActive -Value $formatted
     }
 
-    static [void] WriteError([string]$Message) {
-        [Logger]::Write('ERROR', $Message)
+    Write-Host $formatted -ForegroundColor $color
+}
+
+function Write-LogInfo([string]$Message) {
+    Write-Log 'INFO' $Message
+}
+
+function Write-LogSuccess([string]$Message) {
+    Write-Log 'SUCCESS' $Message
+}
+
+function Write-LogWarning([string]$Message) {
+    Write-Log 'WARNING' $Message
+}
+
+function Write-LogError([string]$Message) {
+    Write-Log 'ERROR' $Message
+}
+
+function Read-LoggedHost([string]$Prompt) {
+    if ($Prompt -and $script:LogFileActive) {
+        Add-Content -Path $script:LogFileActive -Value $Prompt
     }
 
-    static [string] ReadLoggedHost([string]$Prompt) {
-        if ($Prompt -and [Logger]::LogFileActive) {
-            Add-Content -Path [Logger]::LogFileActive -Value $Prompt -Encoding utf8
-        }
-
-        return Read-Host $Prompt
-    }
+    return Read-Host $Prompt
 }
 
 function Remove-NullArguments([object[]]$Arguments = @()) {
@@ -100,9 +102,11 @@ function Invoke-RunAsAdmin([string]$ScriptPath, [string]$ResumeLogPath) {
 
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-ResumeLogPath', $ResumeLogPath)
         $finalArgs = Remove-NullArguments -Arguments $arguments
-        Start-Process -FilePath 'powershell.exe' -ArgumentList $finalArgs -Verb RunAs
-        exit
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $finalArgs -WorkingDirectory (Split-Path -Parent $ScriptPath) -Verb RunAs
+        return $true
     }
+
+    return $false
 }
 
 function Invoke-SuppressedNativeCommand([string]$FilePath, [string[]]$ArgumentList = @()) {
@@ -180,7 +184,7 @@ function Invoke-WithRetries([string]$Description, [int]$MaxAttempts = 3, [script
 
         if ($attempt -lt $MaxAttempts) {
             $remaining = $MaxAttempts - $attempt
-            [Logger]::WriteWarning("$Description failed. $remaining attempt(s) remaining.")
+            Write-LogWarning("$Description failed. $remaining attempt(s) remaining.")
         }
     }
 
@@ -188,12 +192,12 @@ function Invoke-WithRetries([string]$Description, [int]$MaxAttempts = 3, [script
 }
 
 function Register-ScheduledTasks([array]$ScheduledTasks) {
-    [Logger]::WriteInfo("Creating scheduled tasks...")
+    Write-LogInfo("Creating scheduled tasks...")
 
     foreach ($scheduledTask in $ScheduledTasks) {
         Unregister-ScheduledTaskIfPresent -TaskName $scheduledTask.Name
         $null = Register-ScheduledTask -TaskName $scheduledTask.Name -Action $scheduledTask.Action -Trigger $scheduledTask.Trigger -RunLevel $scheduledTask.RunLevel
-        [Logger]::WriteSuccess("Registered scheduled task: $($scheduledTask.Name)")
+        Write-LogSuccess("Registered scheduled task: $($scheduledTask.Name)")
     }
 }
 
@@ -237,14 +241,14 @@ function Install-WSLPlatform([string]$ScriptPath, [string]$LogPath) {
     }
 
     if (-not $isInstalled) {
-        [Logger]::WriteInfo('WSL platform is not installed; installing now (platform only)...')
+        Write-LogInfo('WSL platform is not installed; installing now (platform only)...')
         & wsl.exe --install --no-distribution
         if ($LASTEXITCODE -ne 0) {
             throw "WSL platform installation failed with exit code $LASTEXITCODE"
         }
                 
         Register-RebootTask -ScriptPath $ScriptPath -LogPath $LogPath
-        [Logger]::WriteInfo('Rebooting to continue setup...')
+        Write-LogInfo('Rebooting to continue setup...')
         $null = Restart-Computer
     }
 }
@@ -265,7 +269,7 @@ function Install-WSLDistroIfMissing([string]$DistroName) {
     }
 
     if (-not $installed) {
-        [Logger]::WriteInfo("Installing WSL distro: $DistroName")
+        Write-LogInfo("Installing WSL distro: $DistroName")
         $wslArgs = @('--install', '-d', $DistroName, '--no-launch')
         $wslExitCode = Invoke-SuppressedNativeCommand -FilePath 'wsl.exe' -ArgumentList $wslArgs
         if ($wslExitCode -ne 0) {
@@ -274,12 +278,12 @@ function Install-WSLDistroIfMissing([string]$DistroName) {
         return $true
     }
 
-    [Logger]::WriteInfo("WSL distro '$DistroName' already installed.")
+    Write-LogInfo("WSL distro '$DistroName' already installed.")
     return $false
 }
 
 function Invoke-WSLDotfilesSetup([string]$DistroName, [string]$DotfilesFolder, [string]$LogPath, [string]$ScriptPath) {
-    [Logger]::WriteInfo('Running dotfiles setup inside WSL...')
+    Write-LogInfo('Running dotfiles setup inside WSL...')
 
     $wslScriptDir = Get-WslUnixPath -DistroName $DistroName -WindowsPath $ScriptPath
     $wslDotfilesFolder = Get-WslUnixPath -DistroName $DistroName -WindowsPath $DotfilesFolder
@@ -289,12 +293,12 @@ function Invoke-WSLDotfilesSetup([string]$DistroName, [string]$DotfilesFolder, [
     if ($LASTEXITCODE -ne 0) {
         throw "Dotfiles setup inside WSL failed with exit code $LASTEXITCODE"
     }
-    [Logger]::WriteSuccess('Dotfiles setup completed inside WSL.')
+    Write-LogSuccess('Dotfiles setup completed inside WSL.')
 }
 
 function Invoke-WSLDecryption([string]$Description, [string]$DistroName, [string]$InputPath, [string]$OutputPath) {
     if (Test-Path -LiteralPath $OutputPath) {
-        [Logger]::WriteInfo("$Description output already exists: $OutputPath")
+        Write-LogInfo("$Description output already exists: $OutputPath")
         return
     }
 
@@ -312,17 +316,17 @@ function Invoke-WSLDecryption([string]$Description, [string]$DistroName, [string
     }
 
     Invoke-WithRetries -Description $Description -MaxAttempts 3 -Action $decryptAction
-    [Logger]::WriteSuccess('Decryption successful.')
+    Write-LogSuccess('Decryption successful.')
 }
 
 function New-Symlink([string]$SourcePath, [string]$TargetPath) {
     if ((-not $SourcePath) -or (-not $TargetPath)) {
-        [Logger]::WriteError("New-Symlink requires -SourcePath and -TargetPath arguments")
+        Write-LogError("New-Symlink requires -SourcePath and -TargetPath arguments")
         return
     }
 
     if (-not (Test-Path -Path $SourcePath)) {
-        [Logger]::WriteWarning("Source does not exist: $SourcePath")
+        Write-LogWarning("Source does not exist: $SourcePath")
         return
     }
 
@@ -333,14 +337,14 @@ function New-Symlink([string]$SourcePath, [string]$TargetPath) {
         if ($targetIsLink) {
             $currentTargetPath = $targetItem.Target 2>$null
             if ($currentTargetPath -and $currentTargetPath -eq $SourcePath) {
-                [Logger]::WriteInfo("Symlink already correct: $TargetPath -> $SourcePath")
+                Write-LogInfo("Symlink already correct: $TargetPath -> $SourcePath")
                 return
             }
 
             Remove-Item -LiteralPath $TargetPath -Force
         }
         else {
-            [Logger]::WriteWarning("Target exists and is not a symlink; skipping: $TargetPath")
+            Write-LogWarning("Target exists and is not a symlink; skipping: $TargetPath")
             return
         }
     }
@@ -351,12 +355,12 @@ function New-Symlink([string]$SourcePath, [string]$TargetPath) {
     }
 
     $null = New-Item -ItemType SymbolicLink -Path $TargetPath -Target $SourcePath -Force
-    [Logger]::WriteSuccess("Linked $TargetPath -> $SourcePath")
+    Write-LogSuccess("Linked $TargetPath -> $SourcePath")
 }
 
 function New-SymlinkTree([string]$SourceDirectory, [string]$TargetDirectory) {
     if (-not (Test-Path -Path $SourceDirectory -PathType Container)) {
-        [Logger]::WriteWarning("Source directory does not exist: $SourceDirectory")
+        Write-LogWarning("Source directory does not exist: $SourceDirectory")
         return
     }
 
@@ -368,42 +372,42 @@ function New-SymlinkTree([string]$SourceDirectory, [string]$TargetDirectory) {
 }
 
 function Remove-WingetApps([string[]]$AppsToRemove) {
-    [Logger]::WriteInfo('Removing unwanted winget applications...')
+    Write-LogInfo('Removing unwanted winget applications...')
     foreach ($package in $AppsToRemove) {
-        [Logger]::WriteInfo("Removing package: $package")
+        Write-LogInfo("Removing package: $package")
         $removeArgs = @('remove', '--all', '--exact', '--silent', '--nowarn', '--purge', '--force', '--disable-interactivity', '--accept-source-agreements', '--source', 'winget', $package)
         $removeExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $removeArgs
         if ($removeExitCode -ne 0) {
-            [Logger]::WriteWarning("winget remove exited with code $removeExitCode for package: $package.")
+            Write-LogWarning("winget remove exited with code $removeExitCode for package: $package.")
         }
     }
-    [Logger]::WriteInfo('Unwanted winget application removal complete.')
+    Write-LogInfo('Unwanted winget application removal complete.')
 }
 
 function Update-WingetApps() {
-    [Logger]::WriteInfo('Installing updates...')
+    Write-LogInfo('Installing updates...')
     $updateArgs = @('update', '--all', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements')
     $updateExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $updateArgs
 
     if ($updateExitCode -eq 0) {
-        [Logger]::WriteSuccess("Updates installed...")
+        Write-LogSuccess("Updates installed...")
     }
     else {
-        [Logger]::WriteWarning("winget update exited with code $updateExitCode. Continuing setup.")
+        Write-LogWarning("winget update exited with code $updateExitCode. Continuing setup.")
     }
 }
 
 function Install-WingetApps([string[]]$AppsToInstall) {
-    [Logger]::WriteInfo('Installing winget applications...')
+    Write-LogInfo('Installing winget applications...')
     foreach ($package in $AppsToInstall) {
-        [Logger]::WriteInfo("Installing package: $package")
+        Write-LogInfo("Installing package: $package")
         $installArgs = @('install', '--exact', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', $package)
         $installExitCode = Invoke-SuppressedNativeCommand -FilePath 'winget.exe' -ArgumentList $installArgs
         if ($installExitCode -ne 0) {
-            [Logger]::WriteWarning("winget install exited with code $installExitCode for package: $package.")
+            Write-LogWarning("winget install exited with code $installExitCode for package: $package.")
         }
     }
-    [Logger]::WriteSuccess("Installed winget apps...")
+    Write-LogSuccess("Installed winget apps...")
 }
 
-Export-ModuleMember -Function Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, New-Symlink, New-SymlinkTree, Remove-WingetApps, Update-WingetApps, Install-WingetApps
+Export-ModuleMember -Function Initialize-Logger, Get-LogFileActive, Write-LogInfo, Write-LogSuccess, Write-LogWarning, Write-LogError, Read-LoggedHost, Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, New-Symlink, New-SymlinkTree, Remove-WingetApps, Update-WingetApps, Install-WingetApps

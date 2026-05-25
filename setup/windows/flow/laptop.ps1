@@ -1,5 +1,3 @@
-using module ./shared.psm1
-
 [CmdletBinding()]
 param(
     [string]$ResumeLogPath
@@ -8,6 +6,7 @@ param(
 Import-Module (Join-Path $PSScriptRoot 'shared.psm1')
 
 $ErrorActionPreference = 'Stop'
+$PromptOnExit = $true
 
 try {
     $DotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
@@ -16,23 +15,22 @@ try {
     $WslScriptPath = Resolve-Path (Join-Path $PSScriptRoot '..\..\linux\arch\flow\wsl.sh')
 
     $AppsToRemove = @(
-        'MSIX\Clipchamp.Clipchamp_4.3.10120.0_x64__yxz26nhyzhsrt',
-        'MSIX\Microsoft.BingNews_1.0.2.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.BingSearch_1.1.43.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.BingWeather_3.2.10.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.GetHelp_10.2407.22193.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.MicrosoftEdge.Stable_140.0.3485.66_neutral__8wekyb3d8bbwe',
-        'MSIX\Microsoft.MicrosoftSolitaireCollection_4.22.3190.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.MicrosoftStickyNotes_4.0.6105.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.PowerAutomateDesktop_1.0.1420.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.StartExperiencesApp_1.1.200.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.StorePurchaseApp_22408.1400.1.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.Todos_0.120.7961.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.WidgetsPlatformRuntime_1.6.2.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.WindowsCamera_2025.2505.2.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.WindowsFeedbackHub_1.2401.20253.0_x64__8wekyb3d8bbwe',
-        'MSIX\Microsoft.WindowsSoundRecorder_1.1.5.0_x64__8wekyb3d8bbwe',
-        'MSIX\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe'
+        'Microsoft Clipchamp',
+        'News',
+        'Microsoft Bing',
+        'MSN Weather',
+        'Get Help',
+        'Solitaire & Casual Games',
+        'Microsoft Sticky Notes',
+        'MPower Automate',
+        'Start Experiences App',
+        'Store Experience Host',
+        'Microsoft To Do',
+        'Widgets Platform Runtime',
+        'Windows Camera',
+        'Feedback Hub',
+        'Windows Sound Recorder',
+        'Quick Assist'
     )
 
     $AppsToInstall = @(
@@ -61,32 +59,38 @@ try {
         @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wezterm\wezterm.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' }
     )
 
-    Invoke-RunAsAdmin -ScriptPath $ScriptFile
-    [Logger]::Init($DotfilesFolder, $ResumeLogPath)
+    Initialize-Logger -NewLogFileBasePath $DotfilesFolder -ResumeLogFilePath $ResumeLogPath
 
-    Install-WSLPlatform -ScriptPath $ScriptFile -LogPath [Logger]::LogFileActive
+    if (Invoke-RunAsAdmin -ScriptPath $ScriptFile -ResumeLogPath (Get-LogFileActive)) {
+        $PromptOnExit = $false
+        return
+    }
+
+    Install-WSLPlatform -ScriptPath $ScriptFile -LogPath (Get-LogFileActive)
     Install-WSLDistroIfMissing -DistroName $WslDistroName
 
     Remove-WingetApps -AppsToRemove $AppsToRemove
     Update-WingetApps
     Install-WingetApps -AppsToInstall $AppsToInstall
 
-    Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath [Logger]::LogFileActive -ScriptPath $WslScriptPath
+    Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath (Get-LogFileActive) -ScriptPath $WslScriptPath
 
-    [Logger]::WriteInfo('Creating symbolic links...')
+    Write-LogInfo('Creating symbolic links...')
     New-Symlink -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
     New-SymlinkTree -SourceDirectory "$DotfilesFolder\.ssh" -TargetDirectory "$env:USERPROFILE\.ssh"
 
     Register-ScheduledTasks -ScheduledTasks $ScheduledTasks
 
-    [Logger]::WriteSuccess('Windows setup completed successfully.')
+    Write-LogSuccess('Windows setup completed successfully.')
 }
 catch {
-    [Logger]::WriteError("An error occurred: $($_.Exception.Message)")
-    [Logger]::WriteError("Stack trace: $($_.ScriptStackTrace)")
+    Write-LogError("An error occurred: $($_.Exception.Message)")
+    Write-LogError("Stack trace: $($_.ScriptStackTrace)")
     throw
 }
 finally {
-    Unregister-RebootTask
-    $null = [Logger]::ReadLoggedHost('Press Enter to close')
+    if ($PromptOnExit) {
+        Unregister-RebootTask
+        $null = Read-LoggedHost('Press Enter to close')
+    }
 }

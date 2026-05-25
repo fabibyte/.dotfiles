@@ -42,6 +42,16 @@ else {
     $FlowScriptPath = Join-Path (Join-Path $DotfilesFolder 'setup') $FlowScriptRelativePath
 }
 
+if (-not (Test-Path -LiteralPath $FlowScriptPath -PathType Leaf)) {
+    throw "Could not find flow script: $FlowScriptPath"
+}
+
 $PowerShellArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $FlowScriptPath)
-& powershell @PowerShellArguments
-exit $LASTEXITCODE
+try {
+    Push-Location -LiteralPath (Split-Path -Parent $FlowScriptPath)
+    & powershell @PowerShellArguments
+    exit $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
