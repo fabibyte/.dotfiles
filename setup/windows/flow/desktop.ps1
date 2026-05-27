@@ -10,6 +10,7 @@ $PromptOnExit = $true
 
 try {
     $DotfilesFolder = Join-Path $env:USERPROFILE '.dotfiles'
+    $SubPath = 'desktop'
     $ScriptFile = $PSCommandPath
     $WslDistroName = 'archlinux'
     $WslScriptPath = Resolve-Path (Join-Path $PSScriptRoot '..\..\linux\arch\flow\wsl.sh')
@@ -22,7 +23,7 @@ try {
         'Get Help',
         'Solitaire & Casual Games',
         'Microsoft Sticky Notes',
-        'MPower Automate',
+        'Power Automate',
         'Start Experiences App',
         'Store Experience Host',
         'Microsoft To Do',
@@ -89,7 +90,7 @@ try {
         return
     }
 
-    Write-LogInfo("Version: 2.7")
+    Write-LogInfo("Version: 2.8")
 
     Install-WSLPlatform -ScriptPath $ScriptFile -LogPath (Get-LogFileActive)
     Install-WSLDistroIfMissing -DistroName $WslDistroName
@@ -99,12 +100,11 @@ try {
     Install-WingetApps -AppsToInstall $AppsToInstall
 
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath (Get-LogFileActive) -ScriptPath $WslScriptPath
-    Invoke-WSLDecryption -Description 'Syncthing key decryption' -DistroName $WslDistroName -InputPath "$DotfilesFolder\syncthing\key.pem.enc" -OutputPath "$DotfilesFolder\syncthing\key.pem"
 
-    Write-LogInfo('Creating symbolic links...')
-    New-Symlink -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
-    New-SymlinkTree -SourceDirectory "$DotfilesFolder\.ssh" -TargetDirectory "$env:USERPROFILE\.ssh"
-    New-SymlinkTree -SourceDirectory "$DotfilesFolder\syncthing" -TargetDirectory "$env:LOCALAPPDATA\Syncthing"
+    Write-LogInfo('Copying config files...')
+    Copy-Path -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    Invoke-SSHConfiguration -DotfilesFolder $DotfilesFolder
+    Invoke-SyncthingConfiguration -DotfilesFolder $DotfilesFolder -SubPath $SubPath -DistroName $WslDistroName
 
     Register-ScheduledTasks -ScheduledTasks $ScheduledTasks
 
@@ -118,6 +118,6 @@ catch {
 finally {
     if ($PromptOnExit) {
         Unregister-RebootTask
-        $null = Read-LoggedHost('Press Enter to close')
+        Read-LoggedHost('Press Enter to close')
     }
 }

@@ -22,7 +22,7 @@ try {
         'Get Help',
         'Solitaire & Casual Games',
         'Microsoft Sticky Notes',
-        'MPower Automate',
+        'Power Automate',
         'Start Experiences App',
         'Store Experience Host',
         'Microsoft To Do',
@@ -75,9 +75,9 @@ try {
 
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath (Get-LogFileActive) -ScriptPath $WslScriptPath
 
-    Write-LogInfo('Creating symbolic links...')
-    New-Symlink -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
-    New-SymlinkTree -SourceDirectory "$DotfilesFolder\.ssh" -TargetDirectory "$env:USERPROFILE\.ssh"
+    Write-LogInfo('Copying config files...')
+    Copy-Path -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    Invoke-SSHConfiguration -DotfilesFolder $DotfilesFolder
 
     Register-ScheduledTasks -ScheduledTasks $ScheduledTasks
 
@@ -91,6 +91,6 @@ catch {
 finally {
     if ($PromptOnExit) {
         Unregister-RebootTask
-        $null = Read-LoggedHost('Press Enter to close')
+        Read-LoggedHost('Press Enter to close')
     }
 }

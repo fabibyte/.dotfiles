@@ -275,11 +275,10 @@ function Install-WSLDistroIfMissing([string]$DistroName) {
         if ($wslExitCode -ne 0) {
             throw "WSL distro installation ($DistroName) failed with exit code $LASTEXITCODE"
         }
-        return $true
+        return
     }
 
     Write-LogInfo("WSL distro '$DistroName' already installed.")
-    return $false
 }
 
 function Invoke-WSLDotfilesSetup([string]$DistroName, [string]$DotfilesFolder, [string]$LogPath, [string]$ScriptPath) {
@@ -319,56 +318,29 @@ function Invoke-WSLDecryption([string]$Description, [string]$DistroName, [string
     Write-LogSuccess('Decryption successful.')
 }
 
-function New-Symlink([string]$SourcePath, [string]$TargetPath) {
+function Copy-Path([string]$SourcePath, [string]$TargetPath) {
     if ((-not $SourcePath) -or (-not $TargetPath)) {
-        Write-LogError("New-Symlink requires -SourcePath and -TargetPath arguments")
+        Write-LogError("Copy-Path requires -SourcePath and -TargetPath arguments")
         return
     }
 
-    if (-not (Test-Path -Path $SourcePath)) {
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
         Write-LogWarning("Source does not exist: $SourcePath")
         return
     }
 
-    if (Test-Path -LiteralPath $TargetPath) {
-        $targetItem = Get-Item -LiteralPath $TargetPath -Force
-        $targetIsLink = ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    $sourceItem = Get-Item -LiteralPath $SourcePath -Force
 
-        if ($targetIsLink) {
-            $currentTargetPath = $targetItem.Target 2>$null
-            if ($currentTargetPath -and $currentTargetPath -eq $SourcePath) {
-                Write-LogInfo("Symlink already correct: $TargetPath -> $SourcePath")
-                return
-            }
-
-            Remove-Item -LiteralPath $TargetPath -Force
-        }
-        else {
-            Write-LogWarning("Target exists and is not a symlink; skipping: $TargetPath")
-            return
-        }
+    if ($sourceItem.PSIsContainer) {
+        $null = New-Item -ItemType Directory -Path $TargetPath -Force
+        Get-ChildItem -LiteralPath $SourcePath -Force | Copy-Item -Destination $TargetPath -Recurse -Force
+    }
+    else {
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $TargetPath) -Force
+        Copy-Item -LiteralPath $SourcePath -Destination $TargetPath -Recurse -Force
     }
 
-    $targetDirectory = Split-Path -Parent $TargetPath
-    if (-not (Test-Path $targetDirectory)) {
-        $null = New-Item -ItemType Directory -Path $targetDirectory -Force
-    }
-
-    $null = New-Item -ItemType SymbolicLink -Path $TargetPath -Target $SourcePath -Force
-    Write-LogSuccess("Linked $TargetPath -> $SourcePath")
-}
-
-function New-SymlinkTree([string]$SourceDirectory, [string]$TargetDirectory) {
-    if (-not (Test-Path -Path $SourceDirectory -PathType Container)) {
-        Write-LogWarning("Source directory does not exist: $SourceDirectory")
-        return
-    }
-
-    Get-ChildItem -Path $SourceDirectory -File -Recurse | ForEach-Object {
-        $relativePath = $_.FullName.Substring($SourceDirectory.TrimEnd('\').Length + 1)
-        $targetFilePath = Join-Path $TargetDirectory $relativePath
-        New-Symlink -SourcePath $_.FullName -TargetPath $targetFilePath
-    }
+    Write-LogSuccess("Copied $SourcePath -> $TargetPath")
 }
 
 function Remove-WingetApps([string[]]$AppsToRemove) {
@@ -407,7 +379,21 @@ function Install-WingetApps([string[]]$AppsToInstall) {
             Write-LogWarning("winget install exited with code $installExitCode for package: $package.")
         }
     }
-    Write-LogSuccess("Installed winget apps...")
 }
 
-Export-ModuleMember -Function Initialize-Logger, Get-LogFileActive, Write-LogInfo, Write-LogSuccess, Write-LogWarning, Write-LogError, Read-LoggedHost, Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, New-Symlink, New-SymlinkTree, Remove-WingetApps, Update-WingetApps, Install-WingetApps
+function Invoke-SSHConfiguration([string]$DotfilesFolder) {
+    Copy-Path -SourcePath "$DotfilesFolder\.ssh\config" -TargetPath "$env:USERPROFILE\.ssh\config"
+    Copy-Path -SourcePath "$DotfilesFolder\.ssh\authorized_keys" -TargetPath "$env:USERPROFILE\.ssh\authorized_keys"
+    Copy-Path -SourcePath "$DotfilesFolder\.ssh\id_ed25519.pub" -TargetPath "$env:USERPROFILE\.ssh\id_ed25519.pub"
+    Copy-Path -SourcePath "$DotfilesFolder\.ssh\id_ed25519" -TargetPath "$env:USERPROFILE\.ssh\id_ed25519"
+}
+
+function Invoke-SyncthingConfiguration([string]$DotfilesFolder, [string]$SubPath, [string]$DistroName) {
+    Invoke-WSLDecryption -Description 'Syncthing key decryption' -DistroName $DistroName -InputPath "$DotfilesFolder\syncthing\$SubPath\key.pem.enc" -OutputPath "$DotfilesFolder\syncthing\$SubPath\key.pem"
+
+    Copy-Path -SourcePath "$DotfilesFolder\syncthing\$SubPath\config.xml" -TargetPath "$env:LOCALAPPDATA\Syncthing\config.xml"
+    Copy-Path -SourcePath "$DotfilesFolder\syncthing\$SubPath\cert.pem" -TargetPath "$env:LOCALAPPDATA\Syncthing\cert.pem"
+    Copy-Path -SourcePath "$DotfilesFolder\syncthing\$SubPath\key.pem" -TargetPath "$env:LOCALAPPDATA\Syncthing\key.pem"
+}
+
+Export-ModuleMember -Function Initialize-Logger, Get-LogFileActive, Write-LogInfo, Write-LogSuccess, Write-LogWarning, Write-LogError, Read-LoggedHost, Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, Copy-Path, Remove-WingetApps, Update-WingetApps, Install-WingetApps, Invoke-SSHConfiguration, Invoke-SyncthingConfiguration

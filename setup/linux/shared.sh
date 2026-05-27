@@ -4,6 +4,14 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
 	set -euo pipefail
 fi
 
+readonly TEMP_SUDOERS_FILE="/etc/sudoers.d/passwordless-bootstrap"
+readonly BOOTSTRAP_UID="1000"
+readonly BOOTSTRAP_GID="1000"
+readonly SUDO_GROUP_GID="27"
+readonly SUDO_GROUP_CONFIG_FILE="/etc/sudoers.d/sudo-group"
+readonly SUDO_LECTURE_CONFIG_FILE="/etc/sudoers.d/no-lecture"
+readonly BOOTSTRAP_USER="fabi"
+
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-}"
 
 init_logging() {
@@ -83,6 +91,10 @@ abort() {
 ensure_dotfiles_git_repo() {
 	local dotfiles_folder="$1"
 
+	if ! command -v git >/dev/null 2>&1; then
+		abort "git is not available; cannot initialize dotfiles repository."
+	fi
+
 	if [ -d "$dotfiles_folder/.git" ]; then
 		info "Dotfiles Git repository already initialized at $dotfiles_folder."
 		return
@@ -106,56 +118,53 @@ ensure_dotfiles_git_repo() {
 	success "Dotfiles Git repository initialized."
 }
 
-create_symlink() {
+copy_path() {
 	local source_path="$1"
 	local target_path="$2"
+	local target_parent
+	local writable_parent
+	local copy_source
+	local copy_target
+	local command_prefix=()
 
 	if [[ -z "$source_path" || -z "$target_path" ]]; then
-		error "create_symlink requires <source-path> and <target-path> arguments"
+		error "copy_path requires <source-path> and <target-path> arguments"
 		return 1
 	fi
 
 	if [[ ! -e "$source_path" ]]; then
 		warning "Source does not exist: $source_path"
-		return
+		return 0
 	fi
 
-	if [[ -L "$target_path" ]]; then
-		local current_target_path
-		current_target_path=$(readlink -f "$target_path")
-		if [[ "$current_target_path" = "$source_path" ]]; then
-			info "Symlink already correct: $target_path -> $source_path"
-			return
+	if [[ -d "$source_path" ]]; then
+		target_parent="$target_path"
+		copy_source="${source_path}/."
+		copy_target="${target_path}/"
+	else
+		target_parent="$(dirname -- "$target_path")"
+		copy_source="$source_path"
+		copy_target="$target_path"
+	fi
+
+	writable_parent="$target_parent"
+	while [[ ! -e "$writable_parent" && "$writable_parent" != "/" ]]; do
+		writable_parent="$(dirname -- "$writable_parent")"
+	done
+
+	if [[ "$EUID" -ne 0 && ! -w "$writable_parent" ]]; then
+		if ! command -v sudo >/dev/null 2>&1; then
+			error "sudo is required to copy to $target_path"
+			return 1
 		fi
 
-		rm -f "$target_path"
+		command_prefix=(sudo)
 	fi
 
-	if [[ -e "$target_path" ]]; then
-		warning "Target exists and is not a symlink; skipping: $target_path"
-		return
-	fi
+	"${command_prefix[@]}" mkdir -p -- "$target_parent"
+	"${command_prefix[@]}" cp -a --remove-destination -- "$copy_source" "$copy_target"
 
-	mkdir -p "$(dirname "$target_path")"
-	ln -s "$source_path" "$target_path"
-	success "Linked $target_path -> $source_path"
-}
-
-link_tree() {
-	local source_directory="$1"
-	local target_directory="$2"
-
-	if [[ ! -d "$source_directory" ]]; then
-		warning "Source directory does not exist: $source_directory"
-		return
-	fi
-
-	find "$source_directory" -type f -print0 | while IFS= read -r -d '' source_file_path; do
-		local relative_path
-		relative_path="${source_file_path#"$source_directory"/}"
-		local target_file_path="$target_directory/$relative_path"
-		create_symlink "$source_file_path" "$target_file_path"
-	done
+	success "Copied $source_path -> $target_path"
 }
 
 fetch_file() {
@@ -234,7 +243,7 @@ decrypt() {
 	mkdir -p "$(dirname "$output_path")"
 
 	decrypt_action() {
-		if openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$input_path" -out "$output_path"; then
+		if openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$input_path" -out "$output_path" </dev/tty; then
 			return 0
 		fi
 
@@ -253,108 +262,279 @@ decrypt() {
 	success "Decryption successful."
 }
 
-set_fish_default_shell() {
+set_default_shell() {
+	local shell="$1"
+
 	if ! command -v sudo >/dev/null 2>&1; then
-		warning "sudo is not available; cannot set fish as default shell."
-		return
+		warning "sudo is not available; cannot set default shell to $shell."
+		return 0
 	fi
 
-	if ! command -v fish >/dev/null 2>&1; then
-		warning "fish not installed; skipping shell change."
-		return
+	if ! command -v $shell >/dev/null 2>&1; then
+		warning "$shell not installed; skip skip setting default shell to $shell."
+		return 0
 	fi
 
-	local fish_shell
+	local shell_path
 	local current_shell
-	fish_shell=$(command -v fish)
+	shell_path=$(command -v $shell)
 	current_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
 
-	if ! grep -qx "$fish_shell" /etc/shells; then
-		info "Registering fish shell in /etc/shells..."
-		echo "$fish_shell" | sudo tee -a /etc/shells >/dev/null
+	if [ "$current_shell" = "$shell_path" ]; then
+		info "$shell is already the default shell."
+		return 0
 	fi
 
-	if [ "$current_shell" = "$fish_shell" ]; then
-		info "fish is already the default shell."
+	if ! grep -qx "$shell_path" /etc/shells; then
+		info "Registering $shell in /etc/shells..."
+		echo "$shell_path" | sudo tee -a /etc/shells >/dev/null
+	fi
+
+	info "Setting $shell as default shell..."
+	sudo chsh -s "$shell_path" "$(whoami)"
+	success "Default shell set to $shell."
+}
+
+unlock_root() {
+	[[ "$(whoami)" != "root" ]] && return 0
+
+	local root_hash
+	root_hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
+	if [[ "$root_hash" =~ ^[\*!]*$ ]]; then
+		info "Root password is not set. Please set it now."
+		passwd root
+	else
+		success "Root password is already set."
+	fi
+}
+
+ensure_bootstrap_user() {
+	[[ "$(whoami)" != "root" ]] && return 0
+
+	if ! getent group "$BOOTSTRAP_USER" >/dev/null 2>&1; then
+		groupadd --gid "$BOOTSTRAP_GID" "$BOOTSTRAP_USER"
+	fi
+
+	if ! id -u "$BOOTSTRAP_USER" >/dev/null 2>&1; then
+		info "Creating user $BOOTSTRAP_USER..."
+		useradd --create-home --groups sudo --uid "$BOOTSTRAP_UID" --gid "$BOOTSTRAP_GID" "$BOOTSTRAP_USER"
+
+		info "Please set a password for the new user '$BOOTSTRAP_USER'."
+		passwd "$BOOTSTRAP_USER"
+	fi
+}
+
+enable_bootstrap_sudo() {
+	[[ "$(whoami)" != "root" ]] && return 0
+
+	printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$BOOTSTRAP_USER" >"$TEMP_SUDOERS_FILE"
+	chmod 0440 "$TEMP_SUDOERS_FILE"
+	visudo -cf "$TEMP_SUDOERS_FILE" >/dev/null || abort "Could not validate $TEMP_SUDOERS_FILE."
+}
+
+disable_bootstrap_sudo() {
+	if [[ -f "$TEMP_SUDOERS_FILE" ]]; then
+		rm -f -- "$TEMP_SUDOERS_FILE"
+	fi
+}
+
+rerun_as_bootstrap_user() {
+	[[ "$(whoami)" != "root" ]] && return 0
+
+	local script="$1"
+	local dotfiles_folder="$2"
+
+	info "Switching to user $BOOTSTRAP_USER for the rest of the script..."
+	sudo -u "$BOOTSTRAP_USER" env \
+		DOTFILES_FOLDER="$dotfiles_folder" \
+		DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" \
+		bash "$script"
+}
+
+remount_c_with_permissions() {
+	if ! command -v sudo >/dev/null 2>&1; then
+		warning "sudo is not available; cannot remount"
 		return
 	fi
 
-	info "Setting fish as default shell..."
-	sudo chsh -s "$fish_shell" "$(whoami)"
-	success "Default shell set to fish."
+	local target_uid="$BOOTSTRAP_UID"
+	local target_gid="$BOOTSTRAP_GID"
+	local current_mount_uid
+	local current_mount_gid
+	current_mount_uid=$(stat -c '%u' /mnt/c)
+	current_mount_gid=$(stat -c '%g' /mnt/c)
+
+	if [[ "$current_mount_uid" -ne "$target_uid" || "$current_mount_gid" -ne "$target_gid" ]]; then
+		sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$target_uid,gid=$target_gid,cache=5,access=client,msize=65536"
+	else
+		info "Already mounted with correct UID/GID."
+	fi
 }
 
-install_shared_tooling() {
-	info "Installing additional tooling (Yazi plugins, runtimes, etc.)..."
+configure_sudo() {
+	[[ "$(whoami)" != "root" ]] && return 0
 
-	if command -v ya >/dev/null 2>&1; then
-		info "Installing Yazi plugins..."
-
-		ya pkg add imsi32/yatline &>/dev/null || abort "Failed to install yatline plugin."
-		success "Installed yatline plugin."
-
-		ya pkg add imsi32/yatline-catppuccin &>/dev/null || abort "Failed to install yatline-catppuccin plugin."
-		success "Installed yatline-catppuccin plugin."
-
-		ya pkg add yazi-rs/plugins:full-border &>/dev/null || abort "Failed to install full-border plugin."
-		success "Installed full-border plugin."
-
-		if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
-			git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" &>/dev/null || abort "Failed to install whoosh plugin."
-			success "Installed whoosh plugin."
-		fi
-	else
-		warning "ya (Yazi plugin installer) not found; skipping plugin installs."
-	fi
-
-	info "Selecting global language runtimes via mise..."
-	if command -v mise >/dev/null 2>&1; then
-		for runtime in rust python ruby php go julia node java tree-sitter; do
-			if mise use -g "$runtime"; then
-				success "Global runtime set: $runtime"
-			else
-				warning "Failed to set global runtime for $runtime"
-			fi
-		done
-	else
-		warning "mise not found; skipping language runtime selection."
-	fi
-
-	if command -v pip >/dev/null 2>&1; then
-		info "Installing hererocks..."
-		pip install --user hererocks
-		if command -v hererocks >/dev/null 2>&1; then
-			hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest
-		else
-			warning "hererocks not available after installation."
-		fi
-	else
-		warning "pip not found; skipping hererocks installation."
-	fi
-
-	success "Shared tooling installation complete."
-}
-
-setup_dotfiles() {
 	local dotfiles_folder="$1"
-	local encrypted_ssh_key="$dotfiles_folder/.ssh/id_ed25519.enc"
-	local ssh_key="$dotfiles_folder/.ssh/id_ed25519"
 
-	ensure_dotfiles_git_repo "$dotfiles_folder"
+	if ! getent group sudo >/dev/null 2>&1; then
+		info "Adding sudo group..."
+		groupadd --gid "$SUDO_GROUP_GID" sudo
+	fi
 
-	decrypt "SSH key decryption" "$encrypted_ssh_key" "$ssh_key"
-	chmod 600 "$ssh_key"
-	link_tree "$dotfiles_folder/.ssh" "$HOME/.ssh"
+	info "Configuring sudoers..."
+	local base_target_path="/etc/sudoers.d"
 
-	info "Linking config files..."
-	link_tree "$dotfiles_folder/fish" "$HOME/.config/fish"
-	link_tree "$dotfiles_folder/yazi" "$HOME/.config/yazi"
-	link_tree "$dotfiles_folder/zellij" "$HOME/.config/zellij"
-	link_tree "$dotfiles_folder/nvim" "$HOME/.config/nvim"
-	create_symlink "$dotfiles_folder/.gitconfig" "$HOME/.gitconfig"
+	for file in "$dotfiles_folder"/sudo/*; do
+		[ -f "$file" ] || continue
 
-	info "Fetching themes..."
+		local filename=$(basename "$file")
+		local target_path="$base_target_path/$filename"
+
+		copy_path "$file" "$target_path"
+		chmod 0440 "$target_path"
+
+		if ! visudo -cf "$target_path" >/dev/null; then
+			warning "Could not validate $file. Removing it again."
+			rm "$target_path"
+			continue
+		fi
+	done
+
+	success "sudo is configured."
+}
+
+configure_yazi() {
+	local dotfiles_folder="$1"
+
+	info "Copying yazi config ..."
+	copy_path "$dotfiles_folder/yazi" "$HOME/.config/yazi"
+
+	if ! command -v ya >/dev/null 2>&1; then
+		warning "ya (Yazi plugin installer) not found; skipping further yazi configuration."
+		return 0
+	fi
+
+	if ! command -v git >/dev/null 2>&1; then
+		warning "git not found; skipping further yazi configuration."
+		return 0
+	fi
+
+	info "Installing Yazi plugins..."
+	ya pkg add imsi32/yatline &>/dev/null || abort "Failed to install yatline plugin."
+	success "Installed yatline plugin."
+
+	ya pkg add imsi32/yatline-catppuccin &>/dev/null || abort "Failed to install yatline-catppuccin plugin."
+	success "Installed yatline-catppuccin plugin."
+
+	ya pkg add yazi-rs/plugins:full-border &>/dev/null || abort "Failed to install full-border plugin."
+	success "Installed full-border plugin."
+
+	if [ ! -d "$HOME/.config/yazi/plugins/whoosh.yazi" ]; then
+		git clone https://gitlab.com/WhoSowSee/whoosh.yazi.git "$HOME/.config/yazi/plugins/whoosh.yazi" &>/dev/null || abort "Failed to install whoosh plugin."
+		success "Installed whoosh plugin."
+	fi
+
+	info "Fetching theme..."
 	fetch_file "https://raw.githubusercontent.com/catppuccin/yazi/refs/heads/main/themes/macchiato/catppuccin-macchiato-blue.toml" "$HOME/.config/yazi/theme.toml"
 
-	success "Shared dotfiles setup completed."
+	success "yazi configuration complete!"
+}
+
+configure_mise() {
+	local dotfiles_folder="$1"
+
+	if ! command -v mise >/dev/null 2>&1; then
+		warning "mise not found; skipping mise configuration."
+		return 0
+	fi
+
+	info "Activating mise..."
+	export PATH="$HOME/.local/bin:$PATH"
+	eval "$(mise activate bash --shims)"
+
+	info "Copying mise config file..."
+	copy_path "$dotfiles_folder/mise/config.toml" "$HOME/.config/mise/config.toml"
+
+	info "Installing global language runtimes via mise..."
+
+	if mise install; then
+		success "Global runtimes installed."
+	else
+		warning "Failed to install global runtimes."
+	fi
+
+	success "mise configuration complete!"
+}
+
+configure_nvim() {
+	local dotfiles_folder="$1"
+
+	info "Copying nvim config files..."
+	copy_path "$dotfiles_folder/nvim" "$HOME/.config/nvim"
+
+	if ! command -v pip >/dev/null 2>&1; then
+		warning "pip not found; skipping hererocks installation."
+		return 0
+	fi
+
+	info "Installing hererocks..."
+	pip install --user hererocks
+
+	if ! command -v hererocks >/dev/null 2>&1; then
+		warning "hererocks not available after installation; skipping hererocks installation."
+		return 0
+	fi
+
+	hererocks "$HOME/.local/share/nvim/lazy-rocks/hererocks" -l5.1 -rlatest
+
+	success "nvim configuration complete!"
+}
+
+configure_sshd() {
+	if ! command -v sudo >/dev/null 2>&1; then
+		warning "sudo is not available; cannot setup ssh."
+		return 0
+	fi
+
+	info "Enabling sshd service..."
+	sudo systemctl enable --now sshd &>/dev/null || abort "Failed enable sshd."
+
+	success "sshd configuration complete!"
+}
+
+configure_docker() {
+	if ! command -v sudo >/dev/null 2>&1; then
+		warning "sudo is not available; cannot configure docker."
+		return 0
+	fi
+
+	if ! command -v docker >/dev/null 2>&1; then
+		warning "docker is not available; cannot configure docker."
+		return 0
+	fi
+
+	info "Configuring Docker..."
+
+	if ! getent group docker >/dev/null 2>&1; then
+		sudo groupadd docker
+	fi
+
+	sudo usermod -aG docker "$USER"
+	sudo systemctl enable --now docker.service &>/dev/null || abort "Failed enable docker.service."
+	sudo systemctl enable --now containerd.service &>/dev/null || abort "Failed enable containerd.service."
+
+	success "docker configuration complete!"
+}
+
+configure_ssh_keys() {
+	local dotfiles_folder="$1"
+
+	decrypt "SSH key decryption" "$dotfiles_folder/.ssh/id_ed25519.enc" "$dotfiles_folder/.ssh/id_ed25519"
+	copy_path "$dotfiles_folder/.ssh/config" "$HOME/.ssh/config"
+	copy_path "$dotfiles_folder/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+	copy_path "$dotfiles_folder/.ssh/id_ed25519" "$HOME/.ssh/id_ed25519"
+	copy_path "$dotfiles_folder/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ed25519.pub"
+	chmod 600 "$HOME/.ssh/id_ed25519"
+
+	success "ssh key configuration complete!"
 }

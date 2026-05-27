@@ -1,31 +1,6 @@
 ARCH_FLOW_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCH_DOTFILES_ROOT="$(cd "$ARCH_FLOW_DIRECTORY/../../../.." && pwd)"
 source "$ARCH_FLOW_DIRECTORY/../../shared.sh"
-
-readonly TEMP_SUDOERS_FILE="/etc/sudoers.d/passwordless-bootstrap"
-readonly BOOTSTRAP_USER="fabi"
-readonly BOOTSTRAP_UID="1000"
-readonly BOOTSTRAP_GID="1000"
-readonly SUDO_GROUP_GID="27"
-readonly SUDO_GROUP_CONFIG_FILE="/etc/sudoers.d/10-sudo-group"
-
-cleanup_temp_sudoers() {
-	if [[ -f "$TEMP_SUDOERS_FILE" ]]; then
-		rm -f -- "$TEMP_SUDOERS_FILE"
-	fi
-}
-
-unlock_root() {
-	[[ "$(whoami)" != "root" ]] && return 0
-
-	local root_hash
-	root_hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
-	if [[ "$root_hash" =~ ^[\*!]*$ ]]; then
-		info "Root password is not set. Please set it now."
-		passwd root
-	else
-		success "Root password is already set."
-	fi
-}
 
 setup_pacman_keys() {
 	[[ "$(whoami)" != "root" ]] && return 0
@@ -55,92 +30,31 @@ install_sudo_if_missing() {
 	pacman -Syu --noconfirm --needed sudo >/dev/null || abort "Could not install sudo."
 }
 
-setup_sudo() {
-	[[ "$(whoami)" != "root" ]] && return 0
-
-	if ! getent group sudo >/dev/null 2>&1; then
-		info "Adding sudo group..."
-		groupadd --gid "$SUDO_GROUP_GID" sudo
-	fi
-
-	info "Configuring sudoers..."
-	printf '%%sudo ALL=(ALL:ALL) ALL\n' >"$SUDO_GROUP_CONFIG_FILE"
-	chmod 0440 "$SUDO_GROUP_CONFIG_FILE"
-	visudo -cf "$SUDO_GROUP_CONFIG_FILE" >/dev/null || abort "Could not validate $SUDO_GROUP_CONFIG_FILE."
-
-	success "sudo is configured."
-}
-
-ensure_bootstrap_user() {
-	[[ "$(whoami)" != "root" ]] && return 0
-
-	if ! getent group "$BOOTSTRAP_USER" >/dev/null 2>&1; then
-		groupadd --gid "$BOOTSTRAP_GID" "$BOOTSTRAP_USER"
-	fi
-
-	if ! id -u "$BOOTSTRAP_USER" >/dev/null 2>&1; then
-		info "Creating user $BOOTSTRAP_USER..."
-		useradd --create-home --groups sudo --uid "$BOOTSTRAP_UID" --gid "$BOOTSTRAP_GID" "$BOOTSTRAP_USER"
-
-		info "Please set a password for the new user '$BOOTSTRAP_USER'."
-		passwd "$BOOTSTRAP_USER"
-	fi
-}
-
-enable_bootstrap_sudo() {
-	[[ "$(whoami)" != "root" ]] && return 0
-
-	printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$BOOTSTRAP_USER" >"$TEMP_SUDOERS_FILE"
-	chmod 0440 "$TEMP_SUDOERS_FILE"
-	visudo -cf "$TEMP_SUDOERS_FILE" >/dev/null || abort "Could not validate $TEMP_SUDOERS_FILE."
-}
-
-run_as_bootstrap_user() {
-	[[ "$(whoami)" != "root" ]] && return 0
-
-	info "Switching to user $BOOTSTRAP_USER for the rest of the script..."
-	sudo -u "$BOOTSTRAP_USER" env \
-		DOTFILES_FOLDER="$DOTFILES_FOLDER" \
-		DOTFILES_LOG_FILE="$DOTFILES_LOG_FILE" \
-		bash "$SCRIPT_PATH"
-}
-
-remount_c() {
-	local target_uid="$BOOTSTRAP_UID"
-	local target_gid="$BOOTSTRAP_GID"
-	local current_mount_uid
-	local current_mount_gid
-	current_mount_uid=$(stat -c '%u' /mnt/c)
-	current_mount_gid=$(stat -c '%g' /mnt/c)
-
-	if [[ "$current_mount_uid" -ne "$target_uid" || "$current_mount_gid" -ne "$target_gid" ]]; then
-		sudo mount -t "drvfs" "C:\\" "/mnt/c" -o "rw,noatime,uid=$target_uid,gid=$target_gid,cache=5,access=client,msize=65536"
-	else
-		info "Already mounted with correct UID/GID."
-	fi
-}
-
 change_wsl_distribution_conf() {
 	local config_file="/etc/wsl-distribution.conf"
-	local desired_content
-	desired_content=$(
-		cat <<EOF
-[oobe]
-defaultUid = $BOOTSTRAP_UID
-defaultName = archlinux
+	local template_file="$ARCH_DOTFILES_ROOT/wsl-distribution/arch/wsl-distribution.conf"
+	local temp_directory
+	local staged_config_file
 
-[shortcut]
-icon = /usr/lib/wsl/archlinux.ico
-EOF
-	)
+	if [[ ! -f "$template_file" ]]; then
+		abort "Could not find WSL distribution config template at $template_file."
+	fi
 
-	if [[ -f "$config_file" && "$(<"$config_file")" = "$desired_content" ]]; then
+	temp_directory="$(mktemp -d)"
+	staged_config_file="$temp_directory/wsl-distribution.conf"
+
+	copy_path "$template_file" "$staged_config_file"
+	sed -i "s|\${UID}|$BOOTSTRAP_UID|g" "$staged_config_file"
+
+	if [[ -f "$config_file" ]] && sudo cmp -s "$staged_config_file" "$config_file"; then
 		success "$config_file already has the desired content."
+		rm -rf -- "$temp_directory"
 		return 0
 	fi
 
-	info "Writing $config_file..."
-	printf '%s\n' "$desired_content" | sudo tee "$config_file" >/dev/null
+	info "Copying $config_file..."
+	copy_path "$staged_config_file" "$config_file"
+	rm -rf -- "$temp_directory"
 	success "$config_file has been updated."
 }
 
@@ -152,35 +66,21 @@ install_packages() {
 	info "Updating package cache..."
 	sudo pacman -Syu --noconfirm >/dev/null
 
-	info "Installing base packages..."
+	info "Installing packages..."
 	sudo pacman -S --noconfirm --needed \
-		git base-devel re2c curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
+		git base-devel re2c plocate gd postgresql-libs libzip curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync openssh fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
+	success "Package installation complete."
+}
+
+install_mise() {
 	if command -v mise >/dev/null 2>&1; then
 		info "mise is already installed."
-	else
-		info "Installing mise..."
-		curl -fsSL https://mise.run | sh &>/dev/null || abort "Failed to install mise."
+		return 0
 	fi
 
-	info "Activating mise..."
-	export PATH="$HOME/.local/bin:$PATH"
-	eval "$(mise activate bash --shims)"
+	info "Installing mise..."
+	curl -fsSL https://mise.run | sh &>/dev/null || abort "Failed to install mise."
 
-	info "Enabling sshd service..."
-	sudo systemctl enable --now sshd &>/dev/null || abort "Failed enable sshd."
-
-	info "Configuring Docker..."
-
-	if ! getent group docker >/dev/null 2>&1; then
-		sudo groupadd docker
-	fi
-
-	sudo usermod -aG docker "$USER"
-	sudo systemctl enable --now docker.service &>/dev/null || abort "Failed enable docker.service."
-	sudo systemctl enable --now containerd.service &>/dev/null || abort "Failed enable containerd.service."
-
-	install_shared_tooling
-
-	info "Package installation complete."
+	success "mise installed"
 }
