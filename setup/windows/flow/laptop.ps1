@@ -38,7 +38,7 @@ try {
         'NordSecurity.NordVPN',
         'Google.GoogleDrive',
         'PDFgear.PDFgear',
-        'wez.wezterm',
+        'Alacritty.Alacritty',
         'WinDirStat.WinDirStat',
         'Google.Chrome',
         'Klocman.BulkCrapUninstaller',
@@ -56,7 +56,7 @@ try {
     )
 
     $ScheduledTasks = @(
-        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wezterm\wezterm.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' }
+        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wsl.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' }
     )
 
     Initialize-Logger -NewLogFileBasePath $DotfilesFolder -ResumeLogFilePath $ResumeLogPath
@@ -76,7 +76,7 @@ try {
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath (Get-LogFileActive) -ScriptPath $WslScriptPath
 
     Write-LogInfo('Copying config files...')
-    Copy-Path -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    Invoke-AlacrittyConfiguration -DotfilesFolder $DotfilesFolder
     Invoke-SSHConfiguration -DotfilesFolder $DotfilesFolder
 
     Register-ScheduledTasks -ScheduledTasks $ScheduledTasks

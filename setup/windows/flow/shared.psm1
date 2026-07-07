@@ -191,6 +191,22 @@ function Invoke-WithRetries([string]$Description, [int]$MaxAttempts = 3, [script
     throw "$Description failed after $MaxAttempts attempts. Last error: $lastError"
 }
 
+function Save-RemoteFile([string]$Url, [string]$TargetPath) {
+    $targetDirectory = Split-Path -Parent $TargetPath
+    if ($targetDirectory) {
+        $null = New-Item -ItemType Directory -Path $targetDirectory -Force
+    }
+
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $TargetPath
+        Write-LogSuccess("Fetched $Url -> $TargetPath")
+    }
+    catch {
+        Write-LogError("Failed to fetch $Url")
+        throw
+    }
+}
+
 function Register-ScheduledTasks([array]$ScheduledTasks) {
     Write-LogInfo("Creating scheduled tasks...")
 
@@ -381,6 +397,85 @@ function Install-WingetApps([string[]]$AppsToInstall) {
     }
 }
 
+function Invoke-AlacrittyConfiguration([string]$DotfilesFolder) {
+    $alacrittyFolder = Join-Path $env:APPDATA 'alacritty'
+
+    Copy-Path -SourcePath "$DotfilesFolder\alacritty\alacritty.toml" -TargetPath (Join-Path $alacrittyFolder 'alacritty.toml')
+    Save-RemoteFile -Url 'https://github.com/catppuccin/alacritty/raw/main/catppuccin-macchiato.toml' -TargetPath (Join-Path $alacrittyFolder 'catppuccin-macchiato.toml')
+    Install-NerdFont -Name 'JetBrainsMono' -Variant 'NerdFontMono' -NoLigatures
+}
+
+function Install-NerdFont {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [string]$Variant = 'NerdFontMono',
+        [switch]$NoLigatures
+    )
+
+    if ($Name -notmatch '^[A-Za-z0-9._-]+$') {
+        Write-LogWarning("Invalid Nerd Font name, skipping: $Name")
+        return
+    }
+
+    if ($Variant -notin @('NerdFont', 'NerdFontMono', 'NerdFontPropo')) {
+        Write-LogWarning("Invalid Nerd Font variant, skipping: $Variant")
+        return
+    }
+
+    $noLigatureSuffix = if ($NoLigatures) { 'NL' } else { '' }
+    $fontPrefix = "$Name$noLigatureSuffix$Variant"
+    $tempFolder = Join-Path ([IO.Path]::GetTempPath()) "nerd-font-$Name-$([guid]::NewGuid())"
+    $archivePath = Join-Path $tempFolder "$Name.zip"
+    $extractPath = Join-Path $tempFolder 'extracted'
+
+    try {
+        $null = New-Item -ItemType Directory -Path $extractPath -Force
+        Save-RemoteFile -Url "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/$Name.zip" -TargetPath $archivePath
+        Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+
+        $fontFiles = @(Get-ChildItem -LiteralPath $extractPath -Recurse -File -Filter "$fontPrefix-*.ttf")
+        if ($fontFiles.Count -eq 0) {
+            Write-LogWarning("No Nerd Font files found for prefix: $fontPrefix")
+            return
+        }
+
+        $fontsFolder = (New-Object -ComObject Shell.Application).Namespace(0x14)
+        if (-not $fontsFolder) {
+            Write-LogWarning('Could not open the Windows Fonts folder.')
+            return
+        }
+
+        foreach ($fontFile in $fontFiles) {
+            $installedFontPath = Join-Path "$env:WINDIR\Fonts" $fontFile.Name
+            if (Test-Path -LiteralPath $installedFontPath) {
+                Write-LogInfo("Font already installed, skipping: $($fontFile.Name)")
+                continue
+            }
+
+            $fontsFolder.CopyHere($fontFile.FullName, 0x14)
+            for ($attempt = 0; $attempt -lt 20 -and -not (Test-Path -LiteralPath $installedFontPath); $attempt++) {
+                Start-Sleep -Milliseconds 250
+            }
+
+            if (-not (Test-Path -LiteralPath $installedFontPath)) {
+                Write-LogWarning("Font installation did not complete: $($fontFile.Name)")
+                continue
+            }
+
+            Write-LogSuccess("Installed font: $($fontFile.Name)")
+        }
+    }
+    catch {
+        Write-LogWarning("Nerd Font installation failed for $Name. $($_.Exception.Message)")
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempFolder) {
+            Remove-Item -LiteralPath $tempFolder -Recurse -Force
+        }
+    }
+}
+
 function Invoke-SSHConfiguration([string]$DotfilesFolder) {
     Copy-Path -SourcePath "$DotfilesFolder\.ssh\config" -TargetPath "$env:USERPROFILE\.ssh\config"
     Copy-Path -SourcePath "$DotfilesFolder\.ssh\authorized_keys" -TargetPath "$env:USERPROFILE\.ssh\authorized_keys"
@@ -396,4 +491,4 @@ function Invoke-SyncthingConfiguration([string]$DotfilesFolder, [string]$SubPath
     Copy-Path -SourcePath "$DotfilesFolder\syncthing\$SubPath\key.pem" -TargetPath "$env:LOCALAPPDATA\Syncthing\key.pem"
 }
 
-Export-ModuleMember -Function Initialize-Logger, Get-LogFileActive, Write-LogInfo, Write-LogSuccess, Write-LogWarning, Write-LogError, Read-LoggedHost, Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, Copy-Path, Remove-WingetApps, Update-WingetApps, Install-WingetApps, Invoke-SSHConfiguration, Invoke-SyncthingConfiguration
+Export-ModuleMember -Function Initialize-Logger, Get-LogFileActive, Write-LogInfo, Write-LogSuccess, Write-LogWarning, Write-LogError, Read-LoggedHost, Invoke-RunAsAdmin, Register-ScheduledTasks, Unregister-RebootTask, Install-WSLPlatform, Install-WSLDistroIfMissing, Invoke-WSLDotfilesSetup, Invoke-WSLDecryption, Save-RemoteFile, Copy-Path, Remove-WingetApps, Update-WingetApps, Install-WingetApps, Invoke-AlacrittyConfiguration, Install-NerdFont, Invoke-SSHConfiguration, Invoke-SyncthingConfiguration

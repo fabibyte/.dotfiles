@@ -44,7 +44,7 @@ try {
         # 'NordSecurity.NordVPN',
         # 'Google.GoogleDrive',
         # 'PDFgear.PDFgear',
-        # 'wez.wezterm',
+        # 'Alacritty.Alacritty',
         # 'WinDirStat.WinDirStat',
         # 'Google.Chrome',
         # 'Klocman.BulkCrapUninstaller',
@@ -78,7 +78,7 @@ try {
     )
 
     $ScheduledTasks = @(
-        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wezterm\wezterm.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
+        @{ Name = 'WSL-Script_Logon'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\wsl.vbs"; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
         @{ Name = 'Syncthing_Logon'; Action = New-ScheduledTaskAction -Execute 'syncthing' -Argument '--no-console --no-browser'; Trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; RunLevel = 'Highest' },
         @{ Name = 'Backup-Script_Daily'; Action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "$DotfilesFolder\backup\backup.vbs"; Trigger = New-ScheduledTaskTrigger -Daily -At 8pm; RunLevel = 'Highest' }
     )
@@ -90,7 +90,7 @@ try {
         return
     }
 
-    Write-LogInfo("Version: 2.8")
+    Write-LogInfo("Version: 2.9")
 
     Install-WSLPlatform -ScriptPath $ScriptFile -LogPath (Get-LogFileActive)
     Install-WSLDistroIfMissing -DistroName $WslDistroName
@@ -102,7 +102,7 @@ try {
     Invoke-WSLDotfilesSetup -DistroName $WslDistroName -DotfilesFolder $DotfilesFolder -LogPath (Get-LogFileActive) -ScriptPath $WslScriptPath
 
     Write-LogInfo('Copying config files...')
-    Copy-Path -SourcePath "$DotfilesFolder\wezterm\.wezterm.lua" -TargetPath "$env:USERPROFILE\.wezterm.lua"
+    Invoke-AlacrittyConfiguration -DotfilesFolder $DotfilesFolder
     Invoke-SSHConfiguration -DotfilesFolder $DotfilesFolder
     Invoke-SyncthingConfiguration -DotfilesFolder $DotfilesFolder -SubPath $SubPath -DistroName $WslDistroName
 

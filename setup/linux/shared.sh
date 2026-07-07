@@ -171,11 +171,6 @@ fetch_file() {
 	local url="$1"
 	local target_path="$2"
 
-	if [[ -f "$target_path" ]]; then
-		info "File already present, skipping fetch: $target_path"
-		return
-	fi
-
 	mkdir -p "$(dirname "$target_path")"
 	if curl -fsSL "$url" -o "$target_path"; then
 		success "Fetched $url -> $target_path"

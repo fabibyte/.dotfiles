@@ -30,7 +30,6 @@ main() {
 	install_mise
 	ensure_dotfiles_git_repo "$DOTFILES_FOLDER"
 
-	configure_sshd
 	configure_docker
 	configure_mise "$DOTFILES_FOLDER"
 	configure_yazi "$DOTFILES_FOLDER"
