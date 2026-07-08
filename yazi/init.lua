@@ -72,4 +72,3 @@ local yatline = {
 }
 
 require("yatline"):setup(yatline)
-

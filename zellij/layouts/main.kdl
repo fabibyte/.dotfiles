@@ -1,0 +1,6 @@
+layout {
+    pane
+    pane size=1 {
+        plugin location="compact-bar"
+    }
+}

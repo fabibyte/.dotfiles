@@ -46,7 +46,7 @@ change_wsl_distribution_conf() {
 	copy_path "$template_file" "$staged_config_file"
 	sed -i "s|\${UID}|$BOOTSTRAP_UID|g" "$staged_config_file"
 
-	if [[ -f "$config_file" ]] && sudo cmp -s "$staged_config_file" "$config_file"; then
+	if [[ -r "$config_file" ]] && [[ "$(<"$staged_config_file")" == "$(<"$config_file")" ]]; then
 		success "$config_file already has the desired content."
 		rm -rf -- "$temp_directory"
 		return 0
@@ -68,19 +68,18 @@ install_packages() {
 
 	info "Installing packages..."
 	sudo pacman -S --noconfirm --needed \
-		git base-devel re2c plocate gd postgresql-libs libzip curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
+		git openssh starship eza base-devel re2c plocate gd postgresql-libs libzip curl docker neovim chafa unzip wget gzip tar rsync fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg 7zip jq poppler fzf resvg imagemagick
 
 	success "Package installation complete."
 }
 
 install_mise() {
-       if command -v mise >/dev/null 2>&1; then
-               info "mise is already installed."
-               return 0
-       fi
+	if command -v mise >/dev/null 2>&1; then
+		info "mise is already installed."
+		return 0
+	fi
 
-       info "Installing mise..."
-       curl https://mise.run | sh &>/dev/null || abort "Failed to install mise."
-
-       success "mise installed"
+	info "Installing mise..."
+	curl https://mise.run | sh &>/dev/null || abort "Failed to install mise."
+	success "mise installed"
 }

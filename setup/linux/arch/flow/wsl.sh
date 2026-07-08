@@ -37,9 +37,10 @@ main() {
 	configure_ssh_keys "$DOTFILES_FOLDER"
 
 	info "Copying other config files..."
-	copy_path "$DOTFILES_FOLDER/zellij" "$HOME/.config/zellij"
+	copy_path "$DOTFILES_FOLDER/starship" "$HOME/.config"
 	copy_path "$DOTFILES_FOLDER/fish" "$HOME/.config/fish"
 	copy_path "$DOTFILES_FOLDER/.gitconfig" "$HOME/.gitconfig"
+	copy_path "$DOTFILES_FOLDER/tmux/.tmux.conf" "$HOME/.tmux.conf"
 
 	set_default_shell "$DEFAULT_SHELL"
 }

@@ -90,8 +90,6 @@ try {
         return
     }
 
-    Write-LogInfo("Version: 2.9")
-
     Install-WSLPlatform -ScriptPath $ScriptFile -LogPath (Get-LogFileActive)
     Install-WSLDistroIfMissing -DistroName $WslDistroName
 

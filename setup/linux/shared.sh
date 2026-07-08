@@ -4,12 +4,10 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
 	set -euo pipefail
 fi
 
-readonly TEMP_SUDOERS_FILE="/etc/sudoers.d/passwordless-bootstrap"
+readonly TEMP_SUDOERS_FILE="/etc/sudoers.d/zzz-passwordless-bootstrap"
 readonly BOOTSTRAP_UID="1000"
 readonly BOOTSTRAP_GID="1000"
 readonly SUDO_GROUP_GID="27"
-readonly SUDO_GROUP_CONFIG_FILE="/etc/sudoers.d/sudo-group"
-readonly SUDO_LECTURE_CONFIG_FILE="/etc/sudoers.d/no-lecture"
 readonly BOOTSTRAP_USER="fabi"
 
 DOTFILES_LOG_FILE="${DOTFILES_LOG_FILE:-}"
@@ -448,15 +446,15 @@ configure_yazi() {
 
 configure_mise() {
 	local dotfiles_folder="$1"
+	local mise_path="$HOME/.local/bin/mise"
 
-	if ! command -v mise >/dev/null 2>&1; then
+	if ! command -v "$mise_path" >/dev/null 2>&1; then
 		warning "mise not found; skipping mise configuration."
 		return 0
 	fi
 
 	info "Activating mise..."
-	export PATH="$HOME/.local/bin:$PATH"
-	eval "$(mise activate bash --shims)"
+	eval "$("$mise_path" activate bash --shims)"
 
 	info "Copying mise config file..."
 	copy_path "$dotfiles_folder/mise/config.toml" "$HOME/.config/mise/config.toml"
@@ -540,7 +538,7 @@ configure_ssh_keys() {
 	copy_path "$dotfiles_folder/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
 	copy_path "$dotfiles_folder/.ssh/id_ed25519" "$HOME/.ssh/id_ed25519"
 	copy_path "$dotfiles_folder/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ed25519.pub"
-	chmod 600 "$HOME/.ssh/id_ed25519"
+	chmod 600 "$HOME/.ssh/"*
 
 	success "ssh key configuration complete!"
 }

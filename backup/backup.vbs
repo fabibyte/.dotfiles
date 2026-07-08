@@ -1,2 +1,2 @@
 set object = createobject("wscript.shell") 
-object.run "wsl.exe --distribution archlinux -- ~/backup.sh", 0
+object.run "wsl.exe -d archlinux -- ~/backup.sh", 0
