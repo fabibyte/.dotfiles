@@ -454,16 +454,7 @@ function Install-NerdFont {
             }
 
             $fontsFolder.CopyHere($fontFile.FullName, 0x14)
-            for ($attempt = 0; $attempt -lt 20 -and -not (Test-Path -LiteralPath $installedFontPath); $attempt++) {
-                Start-Sleep -Milliseconds 250
-            }
-
-            if (-not (Test-Path -LiteralPath $installedFontPath)) {
-                Write-LogWarning("Font installation did not complete: $($fontFile.Name)")
-                continue
-            }
-
-            Write-LogSuccess("Installed font: $($fontFile.Name)")
+            Write-LogSuccess("Requested font installation: $($fontFile.Name)")
         }
     }
     catch {

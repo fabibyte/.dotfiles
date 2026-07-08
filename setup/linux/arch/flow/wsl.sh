@@ -27,6 +27,7 @@ main() {
 	remount_c_with_permissions "$BOOTSTRAP_UID" "$BOOTSTRAP_GID"
 	change_wsl_distribution_conf
 	install_packages
+	install_mise
 	ensure_dotfiles_git_repo "$DOTFILES_FOLDER"
 
 	configure_docker
