@@ -68,19 +68,7 @@ install_packages() {
 
 	info "Installing packages..."
 	sudo pacman -S --noconfirm --needed \
-		git base-devel re2c plocate gd postgresql-libs libzip curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
+		mise git base-devel re2c plocate gd postgresql-libs libzip curl docker neovim chafa ueberzugpp viu unzip wget gzip tar rsync fish ripgrep fd bat zoxide git-delta zellij wl-clipboard yazi ffmpeg p7zip jq poppler fzf resvg imagemagick
 
 	success "Package installation complete."
-}
-
-install_mise() {
-	if command -v mise >/dev/null 2>&1; then
-		info "mise is already installed."
-		return 0
-	fi
-
-	info "Installing mise..."
-	curl -fsSL https://mise.run | sh &>/dev/null || abort "Failed to install mise."
-
-	success "mise installed"
 }

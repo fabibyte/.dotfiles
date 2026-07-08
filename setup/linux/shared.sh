@@ -238,10 +238,21 @@ decrypt() {
 	mkdir -p "$(dirname "$output_path")"
 
 	decrypt_action() {
-		if openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$input_path" -out "$output_path" </dev/tty; then
+		local password=""
+
+		printf 'enter AES-256-CBC decryption password: ' >/dev/tty
+		if ! IFS= read -r -s password </dev/tty; then
+			printf '\n' >/dev/tty
+			return 1
+		fi
+		printf '\n' >/dev/tty
+
+		if openssl aes-256-cbc -d -salt -pbkdf2 -iter 100000 -in "$input_path" -out "$output_path" -pass fd:3 3<<<"$password"; then
+			unset password
 			return 0
 		fi
 
+		unset password
 		rm -f -- "$output_path"
 		return 1
 	}
